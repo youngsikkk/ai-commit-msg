@@ -151,7 +151,8 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
           apiKey,
           diffResult.diff,
           diffResult.fileSummary,
-          config.model
+          config.model,
+          config.language
         );
 
         commitMessage = formatCommitMessage(result);

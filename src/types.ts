@@ -22,10 +22,13 @@ export interface DiffResult {
   truncated: boolean;
 }
 
+export type Language = 'english' | 'korean';
+
 export interface Config {
   model: string;
   maxDiffChars: number;
   exclude: string[];
+  language: Language;
 }
 
 export const VALID_COMMIT_TYPES: CommitType[] = [

@@ -62,6 +62,12 @@
             "*.min.*"
           ],
           "description": "Glob patterns for files to exclude from the diff"
+        },
+        "aiCommit.language": {
+          "type": "string",
+          "enum": ["english", "korean"],
+          "default": "english",
+          "description": "Language for commit message subject (type and scope remain in English)"
         }
       }
     },

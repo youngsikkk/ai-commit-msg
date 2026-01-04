@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { Config } from './types';
+import type { Config, Language } from './types';
 
 const API_KEY_SECRET = 'ai-commit-msg.apiKey';
 
@@ -53,6 +53,7 @@ export function getConfig(): Config {
       'dist',
       'build',
       '*.min.*'
-    ])
+    ]),
+    language: config.get<Language>('language', 'english')
   };
 }
