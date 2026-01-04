@@ -1,0 +1,19 @@
+out
+dist
+node_modules
+.vscode-test/
+*.vsix
+
+# Environment & Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
