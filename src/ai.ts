@@ -2,40 +2,46 @@ import OpenAI from 'openai';
 import type { CommitMessage, CommitType, Language } from './types';
 import { VALID_COMMIT_TYPES } from './types';
 
-const SYSTEM_PROMPT_EN = `You are a commit message generator. Analyze the git diff and generate a commit message following Conventional Commits format.
+const SYSTEM_PROMPT_EN = `You are a commit message generator. Analyze the git diff and generate 3 different commit message suggestions following Conventional Commits format.
 
-Output JSON only: { "type": "...", "scope": "...", "subject": "..." }
+Output JSON only: { "candidates": [{ "type": "...", "scope": "...", "subject": "..." }, ...] }
 
 Rules:
 - type: one of feat, fix, docs, style, refactor, perf, test, build, ci, chore
 - scope: optional, short identifier for affected area (e.g., "auth", "api", "ui"). Omit if changes span multiple areas
 - subject: imperative mood (e.g., "add", "fix", "update"), max 72 chars, no period at end, lowercase first letter
+- Provide 3 different variations with different wording or focus
 
-Examples:
-- { "type": "feat", "scope": "auth", "subject": "add OAuth2 login support" }
-- { "type": "fix", "subject": "resolve memory leak in image processing" }
-- { "type": "refactor", "scope": "api", "subject": "simplify error handling middleware" }`;
+Example output:
+{ "candidates": [
+  { "type": "feat", "scope": "auth", "subject": "add OAuth2 login support" },
+  { "type": "feat", "scope": "auth", "subject": "implement OAuth2 authentication flow" },
+  { "type": "feat", "subject": "add social login via OAuth2" }
+]}`;
 
-const SYSTEM_PROMPT_KO = `You are a commit message generator. Analyze the git diff and generate a commit message following Conventional Commits format.
+const SYSTEM_PROMPT_KO = `You are a commit message generator. Analyze the git diff and generate 3 different commit message suggestions following Conventional Commits format.
 
-Output JSON only: { "type": "...", "scope": "...", "subject": "..." }
+Output JSON only: { "candidates": [{ "type": "...", "scope": "...", "subject": "..." }, ...] }
 
 Rules:
 - type: one of feat, fix, docs, style, refactor, perf, test, build, ci, chore (MUST be in English)
 - scope: optional, short identifier for affected area (e.g., "auth", "api", "ui"). Omit if changes span multiple areas (MUST be in English)
 - subject: MUST be written in Korean, max 72 chars, no period at end
+- Provide 3 different variations with different wording or focus
 
-Examples:
-- { "type": "feat", "scope": "auth", "subject": "OAuth2 로그인 지원 추가" }
-- { "type": "fix", "subject": "이미지 처리 메모리 누수 해결" }
-- { "type": "refactor", "scope": "api", "subject": "에러 핸들링 미들웨어 단순화" }`;
+Example output:
+{ "candidates": [
+  { "type": "feat", "scope": "auth", "subject": "OAuth2 로그인 지원 추가" },
+  { "type": "feat", "scope": "auth", "subject": "OAuth2 인증 흐름 구현" },
+  { "type": "feat", "subject": "OAuth2를 통한 소셜 로그인 추가" }
+]}`;
 
 function getSystemPrompt(language: Language): string {
   return language === 'korean' ? SYSTEM_PROMPT_KO : SYSTEM_PROMPT_EN;
 }
 
 function buildUserPrompt(diff: string, fileSummary: string): string {
-  return `Generate a commit message for the following changes:
+  return `Generate 3 commit message candidates for the following changes:
 
 ## Files Changed:
 ${fileSummary || 'No files changed'}
@@ -44,7 +50,7 @@ ${fileSummary || 'No files changed'}
 ${diff || 'No diff available'}`;
 }
 
-function validateCommitMessage(data: unknown): CommitMessage {
+function validateSingleCommitMessage(data: unknown): CommitMessage {
   if (typeof data !== 'object' || data === null) {
     throw new Error('Response is not an object');
   }
@@ -70,8 +76,8 @@ function validateCommitMessage(data: unknown): CommitMessage {
     subject = subject.slice(0, -1);
   }
 
-  // Ensure lowercase first letter
-  if (subject.length > 0) {
+  // Ensure lowercase first letter (only for English)
+  if (subject.length > 0 && /^[a-zA-Z]/.test(subject)) {
     subject = subject.charAt(0).toLowerCase() + subject.slice(1);
   }
 
@@ -87,13 +93,37 @@ function validateCommitMessage(data: unknown): CommitMessage {
   };
 }
 
-async function callOpenAI(
+function validateCommitMessageCandidates(data: unknown): CommitMessage[] {
+  if (typeof data !== 'object' || data === null) {
+    throw new Error('Response is not an object');
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  if (!Array.isArray(obj.candidates)) {
+    throw new Error('Missing or invalid "candidates" array');
+  }
+
+  if (obj.candidates.length < 1) {
+    throw new Error('No candidates provided');
+  }
+
+  return obj.candidates.slice(0, 3).map((candidate, index) => {
+    try {
+      return validateSingleCommitMessage(candidate);
+    } catch (error) {
+      throw new Error(`Invalid candidate ${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+}
+
+async function callOpenAIForCandidates(
   client: OpenAI,
   model: string,
   diff: string,
   fileSummary: string,
   language: Language
-): Promise<CommitMessage> {
+): Promise<CommitMessage[]> {
   const response = await client.chat.completions.create({
     model,
     messages: [
@@ -101,8 +131,8 @@ async function callOpenAI(
       { role: 'user', content: buildUserPrompt(diff, fileSummary) }
     ],
     response_format: { type: 'json_object' },
-    temperature: 0.3,
-    max_tokens: 200
+    temperature: 0.7,
+    max_tokens: 500
   });
 
   const content = response.choices[0]?.message?.content;
@@ -111,29 +141,28 @@ async function callOpenAI(
   }
 
   const parsed = JSON.parse(content);
-  return validateCommitMessage(parsed);
+  return validateCommitMessageCandidates(parsed);
 }
 
-export async function generateCommitMessage(
+export async function generateCommitMessageCandidates(
   apiKey: string,
   diff: string,
   fileSummary: string,
   model: string,
   language: Language
-): Promise<CommitMessage> {
+): Promise<CommitMessage[]> {
   const client = new OpenAI({ apiKey });
 
   // First attempt
   try {
-    return await callOpenAI(client, model, diff, fileSummary, language);
+    return await callOpenAIForCandidates(client, model, diff, fileSummary, language);
   } catch (error) {
     // Retry once on failure
     try {
-      return await callOpenAI(client, model, diff, fileSummary, language);
+      return await callOpenAIForCandidates(client, model, diff, fileSummary, language);
     } catch (retryError) {
-      // Re-throw the retry error with more context
       const message = retryError instanceof Error ? retryError.message : String(retryError);
-      throw new Error(`Failed to generate commit message after retry: ${message}`);
+      throw new Error(`Failed to generate commit messages after retry: ${message}`);
     }
   }
 }

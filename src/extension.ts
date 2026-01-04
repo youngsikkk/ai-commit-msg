@@ -2,7 +2,10 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { getApiKey, promptForApiKey, getConfig } from './config';
 import { hasStagedChanges, getStagedDiff } from './git';
-import { generateCommitMessage, formatCommitMessage } from './ai';
+import { generateCommitMessageCandidates, formatCommitMessage } from './ai';
+import type { CommitMessage } from './types';
+import type { Config } from './types';
+import type { DiffResult } from './types';
 
 interface GitExtension {
   getAPI(version: number): GitAPI;
@@ -16,6 +19,8 @@ interface Repository {
   rootUri: vscode.Uri;
   inputBox: { value: string };
 }
+
+const REGENERATE_LABEL = '$(refresh) Regenerate candidates...';
 
 async function getGitAPI(): Promise<GitAPI | undefined> {
   const gitExtension = vscode.extensions.getExtension<GitExtension>('vscode.git');
@@ -89,6 +94,62 @@ async function handleExistingText(
   return `${currentValue.trim()}\n\n${newMessage}`;
 }
 
+async function fetchCandidates(
+  apiKey: string,
+  diffResult: DiffResult,
+  config: Config
+): Promise<CommitMessage[]> {
+  return await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: 'Generating commit message candidates...',
+      cancellable: false
+    },
+    async () => {
+      return await generateCommitMessageCandidates(
+        apiKey,
+        diffResult.diff,
+        diffResult.fileSummary,
+        config.model,
+        config.language
+      );
+    }
+  );
+}
+
+interface CandidateItem extends vscode.QuickPickItem {
+  commit?: CommitMessage;
+  isRegenerate?: boolean;
+}
+
+async function selectCandidate(candidates: CommitMessage[]): Promise<{ selected?: CommitMessage; regenerate: boolean }> {
+  const items: CandidateItem[] = candidates.map((commit, index) => ({
+    label: `${index + 1}. ${formatCommitMessage(commit)}`,
+    commit
+  }));
+
+  // Add regenerate option
+  items.push({
+    label: REGENERATE_LABEL,
+    description: 'Generate new candidates',
+    isRegenerate: true
+  });
+
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select a commit message'
+  });
+
+  if (!picked) {
+    return { regenerate: false };
+  }
+
+  if (picked.isRegenerate) {
+    return { regenerate: true };
+  }
+
+  return { selected: picked.commit, regenerate: false };
+}
+
 async function generateCommand(context: vscode.ExtensionContext): Promise<void> {
   // Get Git API
   const git = await getGitAPI();
@@ -126,72 +187,76 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
   // Get config
   const config = getConfig();
 
-  // Generate commit message with progress
-  let commitMessage: string | undefined;
-
+  // Get diff result
+  let diffResult: DiffResult;
   try {
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: 'Generating commit message...',
-        cancellable: false
-      },
-      async () => {
-        const diffResult = await getStagedDiff(
-          workspacePath,
-          config.maxDiffChars,
-          config.exclude
-        );
-
-        if (!diffResult.diff.trim()) {
-          throw new Error('No diff content after filtering excluded files');
-        }
-
-        const result = await generateCommitMessage(
-          apiKey,
-          diffResult.diff,
-          diffResult.fileSummary,
-          config.model,
-          config.language
-        );
-
-        commitMessage = formatCommitMessage(result);
-
-        if (diffResult.truncated) {
-          vscode.window.showWarningMessage(
-            'Note: The diff was truncated due to size limits.'
-          );
-        }
-      }
+    diffResult = await getStagedDiff(
+      workspacePath,
+      config.maxDiffChars,
+      config.exclude
     );
+
+    if (!diffResult.diff.trim()) {
+      throw new Error('No diff content after filtering excluded files');
+    }
+
+    if (diffResult.truncated) {
+      vscode.window.showWarningMessage(
+        'Note: The diff was truncated due to size limits.'
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-
-    // Check for common API errors
-    if (message.includes('401') || message.includes('Unauthorized')) {
-      vscode.window.showErrorMessage(
-        'Invalid API key. Please set a valid API key using "AI Commit: Set API Key".'
-      );
-      return;
-    }
-
-    if (message.includes('429') || message.includes('rate limit')) {
-      vscode.window.showErrorMessage(
-        'Rate limit exceeded. Please wait a moment and try again.'
-      );
-      return;
-    }
-
-    vscode.window.showErrorMessage(`Failed to generate commit message: ${message}`);
+    vscode.window.showErrorMessage(`Failed to get diff: ${message}`);
     return;
   }
 
-  if (!commitMessage) {
-    return;
+  // Generate and select candidates loop
+  let selectedMessage: string | undefined;
+
+  while (!selectedMessage) {
+    let candidates: CommitMessage[];
+
+    try {
+      candidates = await fetchCandidates(apiKey, diffResult, config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      if (message.includes('401') || message.includes('Unauthorized')) {
+        vscode.window.showErrorMessage(
+          'Invalid API key. Please set a valid API key using "AI Commit: Set API Key".'
+        );
+        return;
+      }
+
+      if (message.includes('429') || message.includes('rate limit')) {
+        vscode.window.showErrorMessage(
+          'Rate limit exceeded. Please wait a moment and try again.'
+        );
+        return;
+      }
+
+      vscode.window.showErrorMessage(`Failed to generate commit messages: ${message}`);
+      return;
+    }
+
+    const result = await selectCandidate(candidates);
+
+    if (result.regenerate) {
+      // User wants to regenerate, continue loop
+      continue;
+    }
+
+    if (!result.selected) {
+      // User cancelled
+      return;
+    }
+
+    selectedMessage = formatCommitMessage(result.selected);
   }
 
   // Handle existing text in SCM input
-  const finalMessage = await handleExistingText(repo.inputBox.value, commitMessage);
+  const finalMessage = await handleExistingText(repo.inputBox.value, selectedMessage);
   if (finalMessage === undefined) {
     return; // User cancelled
   }
