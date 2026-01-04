@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getApiKey, promptForApiKey, getConfig } from './config';
+import { getApiKeyForProvider, promptForApiKeyForProvider, getConfig } from './config';
 import { hasStagedChanges, getStagedDiff } from './git';
 import { generateCommitMessageCandidates, formatCommitMessage } from './ai';
-import type { CommitMessage } from './types';
-import type { Config } from './types';
-import type { DiffResult } from './types';
+import type { CommitMessage, Config, DiffResult, Provider } from './types';
 
 interface GitExtension {
   getAPI(version: number): GitAPI;
@@ -21,6 +19,12 @@ interface Repository {
 }
 
 const REGENERATE_LABEL = '$(refresh) Regenerate candidates...';
+
+const PROVIDER_NAMES: Record<Provider, string> = {
+  openai: 'OpenAI',
+  groq: 'Groq',
+  gemini: 'Gemini'
+};
 
 async function getGitAPI(): Promise<GitAPI | undefined> {
   const gitExtension = vscode.extensions.getExtension<GitExtension>('vscode.git');
@@ -99,14 +103,17 @@ async function fetchCandidates(
   diffResult: DiffResult,
   config: Config
 ): Promise<CommitMessage[]> {
+  const providerName = PROVIDER_NAMES[config.provider];
+
   return await vscode.window.withProgress(
     {
       location: vscode.ProgressLocation.Notification,
-      title: 'Generating commit message candidates...',
+      title: `Generating commit messages via ${providerName}...`,
       cancellable: false
     },
     async () => {
       return await generateCommitMessageCandidates(
+        config.provider,
         apiKey,
         diffResult.diff,
         diffResult.fileSummary,
@@ -166,10 +173,14 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
 
   const workspacePath = repo.rootUri.fsPath;
 
-  // Get API key
-  let apiKey = await getApiKey(context.secrets);
+  // Get config (includes provider)
+  const config = getConfig();
+  const providerName = PROVIDER_NAMES[config.provider];
+
+  // Get API key for the selected provider
+  let apiKey = await getApiKeyForProvider(config.provider, context.secrets);
   if (!apiKey) {
-    apiKey = await promptForApiKey(context.secrets);
+    apiKey = await promptForApiKeyForProvider(config.provider, context.secrets);
     if (!apiKey) {
       return; // User cancelled
     }
@@ -183,9 +194,6 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     );
     return;
   }
-
-  // Get config
-  const config = getConfig();
 
   // Get diff result
   let diffResult: DiffResult;
@@ -222,9 +230,9 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
-      if (message.includes('401') || message.includes('Unauthorized')) {
+      if (message.includes('401') || message.includes('Unauthorized') || message.includes('invalid')) {
         vscode.window.showErrorMessage(
-          'Invalid API key. Please set a valid API key using "AI Commit: Set API Key".'
+          `Invalid ${providerName} API key. Please set a valid API key.`
         );
         return;
       }
@@ -266,8 +274,16 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
   vscode.window.showInformationMessage('Commit message generated successfully!');
 }
 
-async function setApiKeyCommand(context: vscode.ExtensionContext): Promise<void> {
-  await promptForApiKey(context.secrets);
+async function setOpenAIKeyCommand(context: vscode.ExtensionContext): Promise<void> {
+  await promptForApiKeyForProvider('openai', context.secrets);
+}
+
+async function setGroqKeyCommand(context: vscode.ExtensionContext): Promise<void> {
+  await promptForApiKeyForProvider('groq', context.secrets);
+}
+
+async function setGeminiKeyCommand(context: vscode.ExtensionContext): Promise<void> {
+  await promptForApiKeyForProvider('gemini', context.secrets);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -278,12 +294,27 @@ export function activate(context: vscode.ExtensionContext) {
     () => generateCommand(context)
   );
 
-  const setApiKeyDisposable = vscode.commands.registerCommand(
-    'ai-commit-msg.setApiKey',
-    () => setApiKeyCommand(context)
+  const setOpenAIKeyDisposable = vscode.commands.registerCommand(
+    'ai-commit-msg.setOpenAIKey',
+    () => setOpenAIKeyCommand(context)
   );
 
-  context.subscriptions.push(generateDisposable, setApiKeyDisposable);
+  const setGroqKeyDisposable = vscode.commands.registerCommand(
+    'ai-commit-msg.setGroqKey',
+    () => setGroqKeyCommand(context)
+  );
+
+  const setGeminiKeyDisposable = vscode.commands.registerCommand(
+    'ai-commit-msg.setGeminiKey',
+    () => setGeminiKeyCommand(context)
+  );
+
+  context.subscriptions.push(
+    generateDisposable,
+    setOpenAIKeyDisposable,
+    setGroqKeyDisposable,
+    setGeminiKeyDisposable
+  );
 }
 
 export function deactivate() {}

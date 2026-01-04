@@ -24,7 +24,10 @@ export interface DiffResult {
 
 export type Language = 'english' | 'korean';
 
+export type Provider = 'openai' | 'groq' | 'gemini';
+
 export interface Config {
+  provider: Provider;
   model: string;
   maxDiffChars: number;
   exclude: string[];

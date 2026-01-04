@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
-import type { CommitMessage, CommitType, Language } from './types';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import type { CommitMessage, CommitType, Language, Provider } from './types';
 import { VALID_COMMIT_TYPES } from './types';
 
 const SYSTEM_PROMPT_EN = `You are a commit message generator. Analyze the git diff and generate 3 different commit message suggestions following Conventional Commits format.
@@ -117,13 +118,28 @@ function validateCommitMessageCandidates(data: unknown): CommitMessage[] {
   });
 }
 
-async function callOpenAIForCandidates(
-  client: OpenAI,
+function parseJsonFromText(text: string): unknown {
+  // Try to extract JSON from the response (handles markdown code blocks)
+  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+                    text.match(/(\{[\s\S]*\})/);
+
+  if (jsonMatch) {
+    return JSON.parse(jsonMatch[1].trim());
+  }
+
+  return JSON.parse(text);
+}
+
+// OpenAI API call
+async function callOpenAI(
+  apiKey: string,
   model: string,
   diff: string,
   fileSummary: string,
   language: Language
 ): Promise<CommitMessage[]> {
+  const client = new OpenAI({ apiKey });
+
   const response = await client.chat.completions.create({
     model,
     messages: [
@@ -144,22 +160,109 @@ async function callOpenAIForCandidates(
   return validateCommitMessageCandidates(parsed);
 }
 
+// Groq API call (uses OpenAI SDK with different baseURL)
+async function callGroq(
+  apiKey: string,
+  model: string,
+  diff: string,
+  fileSummary: string,
+  language: Language
+): Promise<CommitMessage[]> {
+  const client = new OpenAI({
+    apiKey,
+    baseURL: 'https://api.groq.com/openai/v1'
+  });
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: getSystemPrompt(language) },
+      { role: 'user', content: buildUserPrompt(diff, fileSummary) }
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.7,
+    max_tokens: 500
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) {
+    throw new Error('Empty response from Groq');
+  }
+
+  const parsed = JSON.parse(content);
+  return validateCommitMessageCandidates(parsed);
+}
+
+// Gemini API call
+async function callGemini(
+  apiKey: string,
+  model: string,
+  diff: string,
+  fileSummary: string,
+  language: Language
+): Promise<CommitMessage[]> {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const geminiModel = genAI.getGenerativeModel({
+    model,
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 500,
+      responseMimeType: 'application/json'
+    }
+  });
+
+  const prompt = `${getSystemPrompt(language)}
+
+${buildUserPrompt(diff, fileSummary)}`;
+
+  const result = await geminiModel.generateContent(prompt);
+  const response = result.response;
+  const text = response.text();
+
+  if (!text) {
+    throw new Error('Empty response from Gemini');
+  }
+
+  const parsed = parseJsonFromText(text);
+  return validateCommitMessageCandidates(parsed);
+}
+
+// Provider dispatcher
+async function callProviderForCandidates(
+  provider: Provider,
+  apiKey: string,
+  model: string,
+  diff: string,
+  fileSummary: string,
+  language: Language
+): Promise<CommitMessage[]> {
+  switch (provider) {
+    case 'openai':
+      return callOpenAI(apiKey, model, diff, fileSummary, language);
+    case 'groq':
+      return callGroq(apiKey, model, diff, fileSummary, language);
+    case 'gemini':
+      return callGemini(apiKey, model, diff, fileSummary, language);
+    default:
+      throw new Error(`Unknown provider: ${provider}`);
+  }
+}
+
 export async function generateCommitMessageCandidates(
+  provider: Provider,
   apiKey: string,
   diff: string,
   fileSummary: string,
   model: string,
   language: Language
 ): Promise<CommitMessage[]> {
-  const client = new OpenAI({ apiKey });
-
   // First attempt
   try {
-    return await callOpenAIForCandidates(client, model, diff, fileSummary, language);
+    return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language);
   } catch (error) {
     // Retry once on failure
     try {
-      return await callOpenAIForCandidates(client, model, diff, fileSummary, language);
+      return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language);
     } catch (retryError) {
       const message = retryError instanceof Error ? retryError.message : String(retryError);
       throw new Error(`Failed to generate commit messages after retry: ${message}`);
