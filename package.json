@@ -1,6 +1,6 @@
 {
   "name": "oai-commit-mesg-gen-ius-Generator",
-  "displayName": "oai-commit-mesg-gen-ius-Generator",
+  "displayName": "CommitCraft AI",
   "description": "Automatically generate commit messages using AI",
   "version": "0.0.1",
   "publisher": "youngsikkk",
