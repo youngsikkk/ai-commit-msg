@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { getApiKeyForProvider, promptForApiKeyForProvider, getConfig } from './config';
+import { getApiKeyForProvider, promptForApiKeyForProvider, promptForOllamaUrl, getConfig } from './config';
 import { hasStagedChanges, getStagedDiff } from './git';
-import { generateCommitMessageCandidates, formatCommitMessage } from './ai';
+import { generateCommitMessageCandidates, formatCommitMessage, summarizeDiff } from './ai';
 import type { CommitMessage, Config, DiffResult, Provider } from './types';
 
 interface GitExtension {
@@ -23,7 +23,8 @@ const REGENERATE_LABEL = '$(refresh) Regenerate candidates...';
 const PROVIDER_NAMES: Record<Provider, string> = {
   openai: 'OpenAI',
   groq: 'Groq',
-  gemini: 'Gemini'
+  gemini: 'Gemini',
+  ollama: 'Ollama'
 };
 
 async function getGitAPI(): Promise<GitAPI | undefined> {
@@ -118,7 +119,8 @@ async function fetchCandidates(
         diffResult.diff,
         diffResult.fileSummary,
         config.model,
-        config.language
+        config.language,
+        config.ollamaUrl
       );
     }
   );
@@ -201,7 +203,8 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     diffResult = await getStagedDiff(
       workspacePath,
       config.maxDiffChars,
-      config.exclude
+      config.exclude,
+      config.maskSensitiveInfo
     );
 
     if (!diffResult.diff.trim()) {
@@ -219,6 +222,41 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
+  // Summarize large diffs if enabled
+  if (config.summarizeLargeDiff && diffResult.diff.length > config.largeDiffThreshold) {
+    try {
+      const summary = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Large diff detected. Summarizing before generating commit message...',
+          cancellable: false
+        },
+        async () => {
+          return await summarizeDiff(
+            config.provider,
+            apiKey,
+            diffResult.diff,
+            config.model,
+            config.ollamaUrl
+          );
+        }
+      );
+
+      // Replace diff with summary for commit message generation
+      diffResult = {
+        ...diffResult,
+        diff: summary,
+        fileSummary: `[Summarized from ${diffResult.diff.length} chars]\n${diffResult.fileSummary}`
+      };
+    } catch (error) {
+      // If summarization fails, continue with original diff
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showWarningMessage(
+        `Failed to summarize diff, using original: ${message}`
+      );
+    }
+  }
+
   // Generate and select candidates loop
   let selectedMessage: string | undefined;
 
@@ -229,6 +267,14 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
       candidates = await fetchCandidates(apiKey, diffResult, config);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+
+      // Ollama connection error
+      if (config.provider === 'ollama' && (message.includes('ECONNREFUSED') || message.includes('fetch failed'))) {
+        vscode.window.showErrorMessage(
+          `Cannot connect to Ollama. Make sure Ollama is running at ${config.ollamaUrl}`
+        );
+        return;
+      }
 
       if (message.includes('401') || message.includes('Unauthorized') || message.includes('invalid')) {
         vscode.window.showErrorMessage(
@@ -286,6 +332,10 @@ async function setGeminiKeyCommand(context: vscode.ExtensionContext): Promise<vo
   await promptForApiKeyForProvider('gemini', context.secrets);
 }
 
+async function setOllamaUrlCommand(): Promise<void> {
+  await promptForOllamaUrl();
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('AI Commit Message Generator is now active');
 
@@ -309,11 +359,17 @@ export function activate(context: vscode.ExtensionContext) {
     () => setGeminiKeyCommand(context)
   );
 
+  const setOllamaUrlDisposable = vscode.commands.registerCommand(
+    'ai-commit-msg.setOllamaUrl',
+    () => setOllamaUrlCommand()
+  );
+
   context.subscriptions.push(
     generateDisposable,
     setOpenAIKeyDisposable,
     setGroqKeyDisposable,
-    setGeminiKeyDisposable
+    setGeminiKeyDisposable,
+    setOllamaUrlDisposable
   );
 }
 

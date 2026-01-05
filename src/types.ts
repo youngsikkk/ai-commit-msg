@@ -24,14 +24,18 @@ export interface DiffResult {
 
 export type Language = 'english' | 'korean';
 
-export type Provider = 'openai' | 'groq' | 'gemini';
+export type Provider = 'openai' | 'groq' | 'gemini' | 'ollama';
 
 export interface Config {
   provider: Provider;
   model: string;
+  ollamaUrl: string;
   maxDiffChars: number;
   exclude: string[];
   language: Language;
+  maskSensitiveInfo: boolean;
+  summarizeLargeDiff: boolean;
+  largeDiffThreshold: number;
 }
 
 export const VALID_COMMIT_TYPES: CommitType[] = [

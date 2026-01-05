@@ -41,6 +41,20 @@ function getSystemPrompt(language: Language): string {
   return language === 'korean' ? SYSTEM_PROMPT_KO : SYSTEM_PROMPT_EN;
 }
 
+const SUMMARIZE_SYSTEM_PROMPT = `You are a code diff summarizer. Summarize the provided git diff concisely.
+
+Rules:
+- Focus on WHAT changed, not HOW (no line numbers or technical diff syntax)
+- Group related changes together
+- Use bullet points for multiple changes
+- Maximum 500 characters
+- Be specific: mention file names, function names, and the nature of changes
+
+Example output:
+- Added user authentication middleware in auth.ts
+- Updated login form validation in LoginForm.tsx
+- Fixed null check bug in userService.ts`;
+
 function buildUserPrompt(diff: string, fileSummary: string): string {
   return `Generate 3 commit message candidates for the following changes:
 
@@ -128,6 +142,142 @@ function parseJsonFromText(text: string): unknown {
   }
 
   return JSON.parse(text);
+}
+
+// Summarization functions for large diffs
+async function summarizeWithOpenAI(
+  apiKey: string,
+  model: string,
+  diff: string
+): Promise<string> {
+  const client = new OpenAI({ apiKey });
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: SUMMARIZE_SYSTEM_PROMPT },
+      { role: 'user', content: `Summarize this diff:\n\n${diff}` }
+    ],
+    temperature: 0.3,
+    max_tokens: 300
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) {
+    throw new Error('Empty summary response from OpenAI');
+  }
+
+  return content.trim();
+}
+
+async function summarizeWithGroq(
+  apiKey: string,
+  model: string,
+  diff: string
+): Promise<string> {
+  const client = new OpenAI({
+    apiKey,
+    baseURL: 'https://api.groq.com/openai/v1'
+  });
+
+  const response = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: SUMMARIZE_SYSTEM_PROMPT },
+      { role: 'user', content: `Summarize this diff:\n\n${diff}` }
+    ],
+    temperature: 0.3,
+    max_tokens: 300
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) {
+    throw new Error('Empty summary response from Groq');
+  }
+
+  return content.trim();
+}
+
+async function summarizeWithGemini(
+  apiKey: string,
+  model: string,
+  diff: string
+): Promise<string> {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const geminiModel = genAI.getGenerativeModel({
+    model,
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 300
+    }
+  });
+
+  const prompt = `${SUMMARIZE_SYSTEM_PROMPT}\n\nSummarize this diff:\n\n${diff}`;
+  const result = await geminiModel.generateContent(prompt);
+  const response = result.response;
+  const text = response.text();
+
+  if (!text) {
+    throw new Error('Empty summary response from Gemini');
+  }
+
+  return text.trim();
+}
+
+async function summarizeWithOllama(
+  ollamaUrl: string,
+  model: string,
+  diff: string
+): Promise<string> {
+  const response = await fetch(`${ollamaUrl}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: SUMMARIZE_SYSTEM_PROMPT },
+        { role: 'user', content: `Summarize this diff:\n\n${diff}` }
+      ],
+      stream: false
+    })
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`Model "${model}" not found. Run: ollama pull ${model}`);
+    }
+    throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json() as { message?: { content?: string } };
+  const content = data.message?.content;
+
+  if (!content) {
+    throw new Error('Empty summary response from Ollama');
+  }
+
+  return content.trim();
+}
+
+export async function summarizeDiff(
+  provider: Provider,
+  apiKey: string,
+  diff: string,
+  model: string,
+  ollamaUrl?: string
+): Promise<string> {
+  switch (provider) {
+    case 'openai':
+      return summarizeWithOpenAI(apiKey, model, diff);
+    case 'groq':
+      return summarizeWithGroq(apiKey, model, diff);
+    case 'gemini':
+      return summarizeWithGemini(apiKey, model, diff);
+    case 'ollama':
+      return summarizeWithOllama(ollamaUrl || 'http://localhost:11434', model, diff);
+    default:
+      throw new Error(`Unknown provider: ${provider}`);
+  }
 }
 
 // OpenAI API call
@@ -227,6 +377,46 @@ ${buildUserPrompt(diff, fileSummary)}`;
   return validateCommitMessageCandidates(parsed);
 }
 
+// Ollama API call (local model)
+async function callOllama(
+  ollamaUrl: string,
+  model: string,
+  diff: string,
+  fileSummary: string,
+  language: Language
+): Promise<CommitMessage[]> {
+  const response = await fetch(`${ollamaUrl}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: getSystemPrompt(language) },
+        { role: 'user', content: buildUserPrompt(diff, fileSummary) }
+      ],
+      format: 'json',
+      stream: false
+    })
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error(`Model "${model}" not found. Run: ollama pull ${model}`);
+    }
+    throw new Error(`Ollama request failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json() as { message?: { content?: string } };
+  const content = data.message?.content;
+
+  if (!content) {
+    throw new Error('Empty response from Ollama');
+  }
+
+  const parsed = parseJsonFromText(content);
+  return validateCommitMessageCandidates(parsed);
+}
+
 // Provider dispatcher
 async function callProviderForCandidates(
   provider: Provider,
@@ -234,7 +424,8 @@ async function callProviderForCandidates(
   model: string,
   diff: string,
   fileSummary: string,
-  language: Language
+  language: Language,
+  ollamaUrl?: string
 ): Promise<CommitMessage[]> {
   switch (provider) {
     case 'openai':
@@ -243,6 +434,8 @@ async function callProviderForCandidates(
       return callGroq(apiKey, model, diff, fileSummary, language);
     case 'gemini':
       return callGemini(apiKey, model, diff, fileSummary, language);
+    case 'ollama':
+      return callOllama(ollamaUrl || 'http://localhost:11434', model, diff, fileSummary, language);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
@@ -254,15 +447,16 @@ export async function generateCommitMessageCandidates(
   diff: string,
   fileSummary: string,
   model: string,
-  language: Language
+  language: Language,
+  ollamaUrl?: string
 ): Promise<CommitMessage[]> {
   // First attempt
   try {
-    return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language);
+    return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language, ollamaUrl);
   } catch (error) {
     // Retry once on failure
     try {
-      return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language);
+      return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language, ollamaUrl);
     } catch (retryError) {
       const message = retryError instanceof Error ? retryError.message : String(retryError);
       throw new Error(`Failed to generate commit messages after retry: ${message}`);

@@ -23,6 +23,7 @@
     "openai",
     "groq",
     "gemini",
+    "ollama",
     "conventional-commits"
   ],
   "activationEvents": [],
@@ -44,6 +45,10 @@
       {
         "command": "ai-commit-msg.setGeminiKey",
         "title": "AI Commit: Set Gemini API Key"
+      },
+      {
+        "command": "ai-commit-msg.setOllamaUrl",
+        "title": "AI Commit: Set Ollama URL"
       }
     ],
     "configuration": {
@@ -51,14 +56,19 @@
       "properties": {
         "aiCommit.provider": {
           "type": "string",
-          "enum": ["openai", "groq", "gemini"],
+          "enum": ["openai", "groq", "gemini", "ollama"],
           "default": "openai",
           "description": "AI provider to use for generating commit messages"
         },
         "aiCommit.model": {
           "type": "string",
           "default": "",
-          "description": "Model to use. Leave empty for defaults: OpenAI=gpt-4o-mini, Groq=llama-3.1-8b-instant, Gemini=gemini-1.5-flash"
+          "description": "Model to use. Leave empty for defaults: OpenAI=gpt-4o-mini, Groq=llama-3.1-8b-instant, Gemini=gemini-1.5-flash, Ollama=llama3.2"
+        },
+        "aiCommit.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama server URL for local model inference"
         },
         "aiCommit.maxDiffChars": {
           "type": "number",
@@ -87,6 +97,21 @@
           ],
           "default": "english",
           "description": "Language for commit message subject (type and scope remain in English)"
+        },
+        "aiCommit.maskSensitiveInfo": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mask sensitive information (API keys, passwords, tokens, etc.) in diff before sending to AI"
+        },
+        "aiCommit.summarizeLargeDiff": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use AI to summarize large diffs before generating commit messages"
+        },
+        "aiCommit.largeDiffThreshold": {
+          "type": "number",
+          "default": 8000,
+          "description": "Character threshold for triggering diff summarization"
         }
       }
     },

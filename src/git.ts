@@ -1,6 +1,7 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import { minimatch } from 'minimatch';
 import type { DiffResult } from './types';
+import { maskSensitiveInfo } from './masking';
 
 function createGit(workspacePath: string): SimpleGit {
   return simpleGit(workspacePath);
@@ -78,7 +79,8 @@ export async function hasStagedChanges(workspacePath: string): Promise<boolean> 
 export async function getStagedDiff(
   workspacePath: string,
   maxChars: number,
-  excludePatterns: string[]
+  excludePatterns: string[],
+  shouldMaskSensitive: boolean = true
 ): Promise<DiffResult> {
   const git = createGit(workspacePath);
 
@@ -91,6 +93,11 @@ export async function getStagedDiff(
   // Filter out excluded files
   let diff = filterDiffByPatterns(rawDiff, excludePatterns);
   const fileSummary = filterFileSummary(rawSummary, excludePatterns);
+
+  // Mask sensitive information if enabled
+  if (shouldMaskSensitive) {
+    diff = maskSensitiveInfo(diff);
+  }
 
   // Check if truncation is needed
   let truncated = false;

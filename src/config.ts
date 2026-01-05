@@ -10,20 +10,27 @@ const API_KEY_SECRETS = {
 const DEFAULT_MODELS: Record<Provider, string> = {
   openai: 'gpt-4o-mini',
   groq: 'llama-3.1-8b-instant',
-  gemini: 'gemini-1.5-flash'
+  gemini: 'gemini-1.5-flash',
+  ollama: 'llama3.2'
 };
 
 const PROVIDER_NAMES: Record<Provider, string> = {
   openai: 'OpenAI',
   groq: 'Groq',
-  gemini: 'Gemini'
+  gemini: 'Gemini',
+  ollama: 'Ollama'
 };
 
 export async function getApiKeyForProvider(
   provider: Provider,
   secrets: vscode.SecretStorage
 ): Promise<string | undefined> {
-  return secrets.get(API_KEY_SECRETS[provider]);
+  // Ollama doesn't require an API key
+  if (provider === 'ollama') {
+    return 'ollama-no-key-needed';
+  }
+  const secretKey = API_KEY_SECRETS[provider as keyof typeof API_KEY_SECRETS];
+  return secrets.get(secretKey);
 }
 
 export async function setApiKeyForProvider(
@@ -31,14 +38,24 @@ export async function setApiKeyForProvider(
   secrets: vscode.SecretStorage,
   key: string
 ): Promise<void> {
-  await secrets.store(API_KEY_SECRETS[provider], key);
+  // Ollama doesn't need API key storage
+  if (provider === 'ollama') {
+    return;
+  }
+  const secretKey = API_KEY_SECRETS[provider as keyof typeof API_KEY_SECRETS];
+  await secrets.store(secretKey, key);
 }
 
 export async function deleteApiKeyForProvider(
   provider: Provider,
   secrets: vscode.SecretStorage
 ): Promise<void> {
-  await secrets.delete(API_KEY_SECRETS[provider]);
+  // Ollama doesn't have API key to delete
+  if (provider === 'ollama') {
+    return;
+  }
+  const secretKey = API_KEY_SECRETS[provider as keyof typeof API_KEY_SECRETS];
+  await secrets.delete(secretKey);
 }
 
 function getValidationForProvider(provider: Provider): (value: string) => string | null {
@@ -73,6 +90,8 @@ function getPlaceholderForProvider(provider: Provider): string {
       return 'gsk_...';
     case 'gemini':
       return 'AI...';
+    case 'ollama':
+      return ''; // Ollama doesn't need API key
   }
 }
 
@@ -99,6 +118,37 @@ export async function promptForApiKeyForProvider(
   return undefined;
 }
 
+export async function promptForOllamaUrl(): Promise<string | undefined> {
+  const config = vscode.workspace.getConfiguration('aiCommit');
+  const currentUrl = config.get<string>('ollamaUrl', 'http://localhost:11434');
+
+  const url = await vscode.window.showInputBox({
+    prompt: 'Enter your Ollama server URL',
+    value: currentUrl,
+    placeHolder: 'http://localhost:11434',
+    ignoreFocusOut: true,
+    validateInput: (value: string) => {
+      if (!value || value.trim().length === 0) {
+        return 'URL cannot be empty';
+      }
+      try {
+        new URL(value);
+        return null;
+      } catch {
+        return 'Invalid URL format';
+      }
+    }
+  });
+
+  if (url) {
+    await config.update('ollamaUrl', url.trim(), vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage(`Ollama URL set to: ${url.trim()}`);
+    return url.trim();
+  }
+
+  return undefined;
+}
+
 export function getConfig(): Config {
   const config = vscode.workspace.getConfiguration('aiCommit');
   const provider = config.get<Provider>('provider', 'openai');
@@ -112,6 +162,7 @@ export function getConfig(): Config {
   return {
     provider,
     model,
+    ollamaUrl: config.get<string>('ollamaUrl', 'http://localhost:11434'),
     maxDiffChars: config.get<number>('maxDiffChars', 12000),
     exclude: config.get<string[]>('exclude', [
       'node_modules',
@@ -120,6 +171,9 @@ export function getConfig(): Config {
       'build',
       '*.min.*'
     ]),
-    language: config.get<Language>('language', 'english')
+    language: config.get<Language>('language', 'english'),
+    maskSensitiveInfo: config.get<boolean>('maskSensitiveInfo', true),
+    summarizeLargeDiff: config.get<boolean>('summarizeLargeDiff', true),
+    largeDiffThreshold: config.get<number>('largeDiffThreshold', 8000)
   };
 }
