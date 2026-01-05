@@ -1,0 +1,8 @@
+{
+  "allowedTypes": ["feat", "fix", "docs", "refactor", "test"],
+  "requireScope": true,
+  "allowedScopes": ["api", "ui", "core", "config"],
+  "maxSubjectLength": 72,
+  "language": "english",
+  "customPrompt": "Always mention the ticket number if visible in the diff"
+}

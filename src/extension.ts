@@ -3,7 +3,9 @@ import * as path from 'path';
 import { getApiKeyForProvider, promptForApiKeyForProvider, promptForOllamaUrl, getConfig } from './config';
 import { hasStagedChanges, getStagedDiff } from './git';
 import { generateCommitMessageCandidates, formatCommitMessage, summarizeDiff } from './ai';
+import { loadRuleset, validateAgainstRuleset } from './ruleset';
 import type { CommitMessage, Config, DiffResult, Provider } from './types';
+import type { CommitRuleset } from './ruleset';
 
 interface GitExtension {
   getAPI(version: number): GitAPI;
@@ -102,7 +104,8 @@ async function handleExistingText(
 async function fetchCandidates(
   apiKey: string,
   diffResult: DiffResult,
-  config: Config
+  config: Config,
+  ruleset?: CommitRuleset
 ): Promise<CommitMessage[]> {
   const providerName = PROVIDER_NAMES[config.provider];
 
@@ -120,7 +123,8 @@ async function fetchCandidates(
         diffResult.fileSummary,
         config.model,
         config.language,
-        config.ollamaUrl
+        config.ollamaUrl,
+        ruleset
       );
     }
   );
@@ -175,8 +179,20 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
 
   const workspacePath = repo.rootUri.fsPath;
 
+  // Load team ruleset if exists
+  const ruleset = await loadRuleset(workspacePath);
+  if (ruleset) {
+    vscode.window.showInformationMessage('Using team commit rules from .commitrc.json');
+  }
+
   // Get config (includes provider)
   const config = getConfig();
+
+  // Override language if ruleset specifies it
+  if (ruleset?.language) {
+    config.language = ruleset.language;
+  }
+
   const providerName = PROVIDER_NAMES[config.provider];
 
   // Get API key for the selected provider
@@ -264,7 +280,7 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     let candidates: CommitMessage[];
 
     try {
-      candidates = await fetchCandidates(apiKey, diffResult, config);
+      candidates = await fetchCandidates(apiKey, diffResult, config, ruleset || undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
@@ -304,6 +320,27 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     if (!result.selected) {
       // User cancelled
       return;
+    }
+
+    // Validate against ruleset if exists
+    if (ruleset) {
+      const validationErrors = validateAgainstRuleset(result.selected, ruleset);
+      if (validationErrors.length > 0) {
+        const proceed = await vscode.window.showWarningMessage(
+          `Commit message doesn't match team rules:\n${validationErrors.join('\n')}`,
+          'Use Anyway',
+          'Regenerate',
+          'Cancel'
+        );
+
+        if (proceed === 'Regenerate') {
+          continue;
+        }
+        if (proceed === 'Cancel' || !proceed) {
+          return;
+        }
+        // 'Use Anyway' - proceed with the message
+      }
     }
 
     selectedMessage = formatCommitMessage(result.selected);
