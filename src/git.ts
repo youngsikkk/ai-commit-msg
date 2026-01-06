@@ -76,6 +76,12 @@ export async function hasStagedChanges(workspacePath: string): Promise<boolean> 
   return diff.trim().length > 0;
 }
 
+export async function getCurrentBranch(workspacePath: string): Promise<string> {
+  const git = createGit(workspacePath);
+  const branchSummary = await git.branch();
+  return branchSummary.current;
+}
+
 export async function getStagedDiff(
   workspacePath: string,
   maxChars: number,
@@ -126,4 +132,71 @@ export async function getFileSummary(
   const git = createGit(workspacePath);
   const rawSummary = await git.diff(['--cached', '--name-status']);
   return filterFileSummary(rawSummary, excludePatterns);
+}
+
+export async function hasUncommittedChanges(workspacePath: string): Promise<boolean> {
+  const git = createGit(workspacePath);
+  // Check both staged and unstaged changes
+  const [staged, unstaged] = await Promise.all([
+    git.diff(['--cached', '--name-only']),
+    git.diff(['--name-only'])
+  ]);
+  return staged.trim().length > 0 || unstaged.trim().length > 0;
+}
+
+export async function getUncommittedDiff(
+  workspacePath: string,
+  maxChars: number,
+  excludePatterns: string[],
+  shouldMaskSensitive: boolean = true
+): Promise<DiffResult> {
+  const git = createGit(workspacePath);
+
+  // Get both staged and unstaged changes
+  const [stagedDiff, unstagedDiff, stagedSummary, unstagedSummary] = await Promise.all([
+    git.diff(['--cached']),
+    git.diff([]),
+    git.diff(['--cached', '--name-status']),
+    git.diff(['--name-status'])
+  ]);
+
+  // Combine diffs (staged first, then unstaged)
+  let rawDiff = stagedDiff;
+  if (unstagedDiff.trim()) {
+    rawDiff += (rawDiff ? '\n' : '') + unstagedDiff;
+  }
+
+  // Combine summaries and dedupe
+  const allSummaryLines = new Set<string>();
+  stagedSummary.split('\n').filter(l => l.trim()).forEach(l => allSummaryLines.add(l));
+  unstagedSummary.split('\n').filter(l => l.trim()).forEach(l => allSummaryLines.add(l));
+  const rawSummary = Array.from(allSummaryLines).join('\n');
+
+  // Filter out excluded files
+  let diff = filterDiffByPatterns(rawDiff, excludePatterns);
+  const fileSummary = filterFileSummary(rawSummary, excludePatterns);
+
+  // Mask sensitive information if enabled
+  if (shouldMaskSensitive) {
+    diff = maskSensitiveInfo(diff);
+  }
+
+  // Check if truncation is needed
+  let truncated = false;
+  if (diff.length > maxChars) {
+    diff = diff.substring(0, maxChars);
+    // Try to end at a line boundary
+    const lastNewline = diff.lastIndexOf('\n');
+    if (lastNewline > maxChars * 0.8) {
+      diff = diff.substring(0, lastNewline);
+    }
+    diff += '\n... [diff truncated]';
+    truncated = true;
+  }
+
+  return {
+    diff,
+    fileSummary,
+    truncated
+  };
 }

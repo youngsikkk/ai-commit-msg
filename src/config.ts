@@ -174,6 +174,8 @@ export function getConfig(): Config {
     language: config.get<Language>('language', 'english'),
     maskSensitiveInfo: config.get<boolean>('maskSensitiveInfo', true),
     summarizeLargeDiff: config.get<boolean>('summarizeLargeDiff', true),
-    largeDiffThreshold: config.get<number>('largeDiffThreshold', 8000)
+    largeDiffThreshold: config.get<number>('largeDiffThreshold', 8000),
+    issuePrefix: config.get<string>('issuePrefix', ''),
+    issueBranchPattern: config.get<string>('issueBranchPattern', '')
   };
 }

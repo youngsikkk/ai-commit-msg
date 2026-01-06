@@ -36,6 +36,8 @@ export interface Config {
   maskSensitiveInfo: boolean;
   summarizeLargeDiff: boolean;
   largeDiffThreshold: number;
+  issuePrefix: string;
+  issueBranchPattern: string;
 }
 
 export const VALID_COMMIT_TYPES: CommitType[] = [

@@ -39,8 +39,16 @@ Example output:
   { "type": "feat", "subject": "OAuth2를 통한 소셜 로그인 추가" }
 ]}`;
 
-function getSystemPrompt(language: Language, ruleset?: CommitRuleset): string {
-  const basePrompt = language === 'korean' ? SYSTEM_PROMPT_KO : SYSTEM_PROMPT_EN;
+function getSystemPrompt(language: Language, ruleset?: CommitRuleset, issueReference?: string): string {
+  let basePrompt = language === 'korean' ? SYSTEM_PROMPT_KO : SYSTEM_PROMPT_EN;
+
+  if (issueReference) {
+    const issueInstruction = language === 'korean'
+      ? `\n\nIMPORTANT: Include "${issueReference}" at the end of each subject. Example: "add login validation ${issueReference}"`
+      : `\n\nIMPORTANT: Include "${issueReference}" at the end of each subject. Example: "add login validation ${issueReference}"`;
+    basePrompt += issueInstruction;
+  }
+
   if (ruleset) {
     const additions = buildRulesetPromptAdditions(ruleset);
     return basePrompt + additions;
@@ -294,14 +302,15 @@ async function callOpenAI(
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  issueReference?: string
 ): Promise<CommitMessage[]> {
   const client = new OpenAI({ apiKey });
 
   const response = await client.chat.completions.create({
     model,
     messages: [
-      { role: 'system', content: getSystemPrompt(language, ruleset) },
+      { role: 'system', content: getSystemPrompt(language, ruleset, issueReference) },
       { role: 'user', content: buildUserPrompt(diff, fileSummary) }
     ],
     response_format: { type: 'json_object' },
@@ -325,7 +334,8 @@ async function callGroq(
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  issueReference?: string
 ): Promise<CommitMessage[]> {
   const client = new OpenAI({
     apiKey,
@@ -335,7 +345,7 @@ async function callGroq(
   const response = await client.chat.completions.create({
     model,
     messages: [
-      { role: 'system', content: getSystemPrompt(language, ruleset) },
+      { role: 'system', content: getSystemPrompt(language, ruleset, issueReference) },
       { role: 'user', content: buildUserPrompt(diff, fileSummary) }
     ],
     response_format: { type: 'json_object' },
@@ -359,7 +369,8 @@ async function callGemini(
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  issueReference?: string
 ): Promise<CommitMessage[]> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const geminiModel = genAI.getGenerativeModel({
@@ -371,7 +382,7 @@ async function callGemini(
     }
   });
 
-  const prompt = `${getSystemPrompt(language, ruleset)}
+  const prompt = `${getSystemPrompt(language, ruleset, issueReference)}
 
 ${buildUserPrompt(diff, fileSummary)}`;
 
@@ -394,7 +405,8 @@ async function callOllama(
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  issueReference?: string
 ): Promise<CommitMessage[]> {
   const response = await fetch(`${ollamaUrl}/api/chat`, {
     method: 'POST',
@@ -402,7 +414,7 @@ async function callOllama(
     body: JSON.stringify({
       model,
       messages: [
-        { role: 'system', content: getSystemPrompt(language, ruleset) },
+        { role: 'system', content: getSystemPrompt(language, ruleset, issueReference) },
         { role: 'user', content: buildUserPrompt(diff, fileSummary) }
       ],
       format: 'json',
@@ -437,17 +449,18 @@ async function callProviderForCandidates(
   fileSummary: string,
   language: Language,
   ollamaUrl?: string,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  issueReference?: string
 ): Promise<CommitMessage[]> {
   switch (provider) {
     case 'openai':
-      return callOpenAI(apiKey, model, diff, fileSummary, language, ruleset);
+      return callOpenAI(apiKey, model, diff, fileSummary, language, ruleset, issueReference);
     case 'groq':
-      return callGroq(apiKey, model, diff, fileSummary, language, ruleset);
+      return callGroq(apiKey, model, diff, fileSummary, language, ruleset, issueReference);
     case 'gemini':
-      return callGemini(apiKey, model, diff, fileSummary, language, ruleset);
+      return callGemini(apiKey, model, diff, fileSummary, language, ruleset, issueReference);
     case 'ollama':
-      return callOllama(ollamaUrl || 'http://localhost:11434', model, diff, fileSummary, language, ruleset);
+      return callOllama(ollamaUrl || 'http://localhost:11434', model, diff, fileSummary, language, ruleset, issueReference);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
@@ -461,15 +474,16 @@ export async function generateCommitMessageCandidates(
   model: string,
   language: Language,
   ollamaUrl?: string,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  issueReference?: string
 ): Promise<CommitMessage[]> {
   // First attempt
   try {
-    return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language, ollamaUrl, ruleset);
+    return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language, ollamaUrl, ruleset, issueReference);
   } catch (error) {
     // Retry once on failure
     try {
-      return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language, ollamaUrl, ruleset);
+      return await callProviderForCandidates(provider, apiKey, model, diff, fileSummary, language, ollamaUrl, ruleset, issueReference);
     } catch (retryError) {
       const message = retryError instanceof Error ? retryError.message : String(retryError);
       throw new Error(`Failed to generate commit messages after retry: ${message}`);

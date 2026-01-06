@@ -49,6 +49,10 @@
       {
         "command": "ai-commit-msg.setOllamaUrl",
         "title": "AI Commit: Set Ollama URL"
+      },
+      {
+        "command": "ai-commit-msg.generatePR",
+        "title": "AI Commit: Generate PR Description"
       }
     ],
     "configuration": {
@@ -112,6 +116,16 @@
           "type": "number",
           "default": 8000,
           "description": "Character threshold for triggering diff summarization"
+        },
+        "aiCommit.issuePrefix": {
+          "type": "string",
+          "default": "",
+          "description": "Prefix for issue references (e.g., '#', 'JIRA-', 'GH-')"
+        },
+        "aiCommit.issueBranchPattern": {
+          "type": "string",
+          "default": "",
+          "description": "Regex pattern to extract issue from branch name (e.g., 'feature/(\\d+)' or '(JIRA-\\d+)')"
         }
       }
     },
@@ -120,6 +134,11 @@
         "command": "ai-commit-msg.generate",
         "key": "ctrl+shift+g",
         "mac": "cmd+shift+g"
+      },
+      {
+        "command": "ai-commit-msg.generatePR",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r"
       }
     ]
   },

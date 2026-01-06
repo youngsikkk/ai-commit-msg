@@ -16,6 +16,8 @@ Generate meaningful commit messages automatically using AI. Analyzes your staged
 
 - **Multi-provider support** - Choose from OpenAI, Groq, Google Gemini, or **Ollama (offline)**
 - **3 commit message candidates** - Pick the best one from AI-generated options
+- **PR description generation** - Auto-generate structured PR descriptions from your changes
+- **Issue linking** - Auto-detect issue numbers from branch names (GitHub, GitLab, JIRA)
 - **Korean language support** - Generate commit messages in Korean
 - **Conventional Commits format** for consistent, semantic versioning friendly messages
 - **Sensitive information masking** - Automatically masks API keys, passwords, tokens before sending to AI
@@ -50,6 +52,23 @@ Create a `.commitrc.json` file in your project root to enforce team conventions:
 - Max subject length
 - Custom prompts for AI
 - Language override
+
+### PR Description Generation
+Automatically generate well-structured PR descriptions with:
+- Title (max 50 chars)
+- Summary section
+- Changes bullet list
+- Testing instructions
+
+Opens in a new editor tab with "Copy to Clipboard" option.
+
+### Issue Linking
+Automatically extract issue numbers from branch names and include them in commit messages:
+- Configure `issueBranchPattern` to extract issue from branch (e.g., `feature/(\d+)` extracts `123` from `feature/123-login`)
+- Configure `issuePrefix` to format the reference (e.g., `#` → `#123`)
+- Works with GitHub, GitLab, JIRA, and custom issue systems
+
+Example: Branch `feature/123-add-login` → Commit: `feat(auth): add login validation #123`
 
 ---
 
@@ -88,6 +107,8 @@ Create a `.commitrc.json` file in your project root to enforce team conventions:
 | `aiCommit.maskSensitiveInfo` | boolean | `true` | Mask sensitive info in diff before sending to AI |
 | `aiCommit.summarizeLargeDiff` | boolean | `true` | Summarize large diffs before generating messages |
 | `aiCommit.largeDiffThreshold` | number | `8000` | Character threshold for diff summarization |
+| `aiCommit.issuePrefix` | string | `""` | Prefix for issue references (e.g., `#`, `JIRA-`) |
+| `aiCommit.issueBranchPattern` | string | `""` | Regex to extract issue from branch name |
 
 ### Default Models by Provider
 
@@ -150,6 +171,40 @@ When a generated commit doesn't match the ruleset, you'll get options to:
 
 ---
 
+## Issue Linking Setup
+
+Configure issue extraction from branch names:
+
+### GitHub/GitLab Issues
+```json
+// settings.json
+{
+  "aiCommit.issuePrefix": "#",
+  "aiCommit.issueBranchPattern": "feature/(\\d+)"
+}
+```
+Branch `feature/123-add-login` → `#123`
+
+### JIRA Issues
+```json
+{
+  "aiCommit.issuePrefix": "",
+  "aiCommit.issueBranchPattern": "(PROJ-\\d+)"
+}
+```
+Branch `feature/PROJ-456-fix-bug` → `PROJ-456`
+
+### Custom Pattern Examples
+
+| Branch Pattern | Regex | Result |
+|----------------|-------|--------|
+| `feature/123-desc` | `feature/(\\d+)` | `123` |
+| `JIRA-456-feature` | `(JIRA-\\d+)` | `JIRA-456` |
+| `issue-789/fix` | `issue-(\\d+)` | `789` |
+| `GH-101-bugfix` | `(GH-\\d+)` | `GH-101` |
+
+---
+
 ## Supported Commit Types
 
 | Type | Description |
@@ -172,6 +227,7 @@ When a generated commit doesn't match the ruleset, you'll get options to:
 | Command | Description |
 |---------|-------------|
 | `AI Commit: Generate` | Generate commit message from staged changes |
+| `AI Commit: Generate PR Description` | Generate PR description from uncommitted changes |
 | `AI Commit: Set OpenAI API Key` | Set/update OpenAI API key |
 | `AI Commit: Set Groq API Key` | Set/update Groq API key |
 | `AI Commit: Set Gemini API Key` | Set/update Gemini API key |
@@ -184,6 +240,7 @@ When a generated commit doesn't match the ruleset, you'll get options to:
 | Command | Windows/Linux | Mac |
 |---------|---------------|-----|
 | AI Commit: Generate | `Ctrl+Shift+G` | `Cmd+Shift+G` |
+| AI Commit: Generate PR Description | `Ctrl+Shift+R` | `Cmd+Shift+R` |
 
 ---
 

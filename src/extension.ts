@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { getApiKeyForProvider, promptForApiKeyForProvider, promptForOllamaUrl, getConfig } from './config';
-import { hasStagedChanges, getStagedDiff } from './git';
+import { hasStagedChanges, getStagedDiff, hasUncommittedChanges, getUncommittedDiff, getCurrentBranch } from './git';
 import { generateCommitMessageCandidates, formatCommitMessage, summarizeDiff } from './ai';
 import { loadRuleset, validateAgainstRuleset } from './ruleset';
+import { generatePRDescription } from './pr';
+import { getIssueReferenceFromBranch } from './issue';
 import type { CommitMessage, Config, DiffResult, Provider } from './types';
 import type { CommitRuleset } from './ruleset';
 
@@ -105,7 +107,8 @@ async function fetchCandidates(
   apiKey: string,
   diffResult: DiffResult,
   config: Config,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  issueReference?: string
 ): Promise<CommitMessage[]> {
   const providerName = PROVIDER_NAMES[config.provider];
 
@@ -124,7 +127,8 @@ async function fetchCandidates(
         config.model,
         config.language,
         config.ollamaUrl,
-        ruleset
+        ruleset,
+        issueReference
       );
     }
   );
@@ -194,6 +198,24 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
   }
 
   const providerName = PROVIDER_NAMES[config.provider];
+
+  // Extract issue reference from branch name if pattern is configured
+  let issueReference: string | null = null;
+  if (config.issueBranchPattern) {
+    try {
+      const branchName = await getCurrentBranch(workspacePath);
+      issueReference = getIssueReferenceFromBranch(
+        branchName,
+        config.issueBranchPattern,
+        config.issuePrefix
+      );
+      if (issueReference) {
+        vscode.window.showInformationMessage(`Detected issue: ${issueReference}`);
+      }
+    } catch {
+      // Silently ignore branch detection errors
+    }
+  }
 
   // Get API key for the selected provider
   let apiKey = await getApiKeyForProvider(config.provider, context.secrets);
@@ -280,7 +302,7 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     let candidates: CommitMessage[];
 
     try {
-      candidates = await fetchCandidates(apiKey, diffResult, config, ruleset || undefined);
+      candidates = await fetchCandidates(apiKey, diffResult, config, ruleset || undefined, issueReference || undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
@@ -373,6 +395,181 @@ async function setOllamaUrlCommand(): Promise<void> {
   await promptForOllamaUrl();
 }
 
+async function generatePRCommand(context: vscode.ExtensionContext): Promise<void> {
+  // Get Git API
+  const git = await getGitAPI();
+  if (!git) {
+    vscode.window.showErrorMessage('Git extension not found. Please install the Git extension.');
+    return;
+  }
+
+  // Select repository
+  const repo = await selectRepository(git);
+  if (!repo) {
+    return;
+  }
+
+  const workspacePath = repo.rootUri.fsPath;
+
+  // Load team ruleset if exists
+  const ruleset = await loadRuleset(workspacePath);
+
+  // Get config
+  const config = getConfig();
+
+  // Override language if ruleset specifies it
+  if (ruleset?.language) {
+    config.language = ruleset.language;
+  }
+
+  const providerName = PROVIDER_NAMES[config.provider];
+
+  // Get API key for the selected provider
+  let apiKey = await getApiKeyForProvider(config.provider, context.secrets);
+  if (!apiKey) {
+    apiKey = await promptForApiKeyForProvider(config.provider, context.secrets);
+    if (!apiKey) {
+      return; // User cancelled
+    }
+  }
+
+  // Check for uncommitted changes (staged or unstaged)
+  const hasChanges = await hasUncommittedChanges(workspacePath);
+  if (!hasChanges) {
+    vscode.window.showInformationMessage(
+      'No uncommitted changes found. Make some changes first.'
+    );
+    return;
+  }
+
+  // Get diff result (all uncommitted changes)
+  let diffResult: DiffResult;
+  try {
+    diffResult = await getUncommittedDiff(
+      workspacePath,
+      config.maxDiffChars,
+      config.exclude,
+      config.maskSensitiveInfo
+    );
+
+    if (!diffResult.diff.trim()) {
+      throw new Error('No diff content after filtering excluded files');
+    }
+
+    if (diffResult.truncated) {
+      vscode.window.showWarningMessage(
+        'Note: The diff was truncated due to size limits.'
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`Failed to get diff: ${message}`);
+    return;
+  }
+
+  // Summarize large diffs if enabled
+  if (config.summarizeLargeDiff && diffResult.diff.length > config.largeDiffThreshold) {
+    try {
+      const summary = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Large diff detected. Summarizing before generating PR description...',
+          cancellable: false
+        },
+        async () => {
+          return await summarizeDiff(
+            config.provider,
+            apiKey,
+            diffResult.diff,
+            config.model,
+            config.ollamaUrl
+          );
+        }
+      );
+
+      diffResult = {
+        ...diffResult,
+        diff: summary,
+        fileSummary: `[Summarized from ${diffResult.diff.length} chars]\n${diffResult.fileSummary}`
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showWarningMessage(
+        `Failed to summarize diff, using original: ${message}`
+      );
+    }
+  }
+
+  // Generate PR description
+  let prDescription: string;
+  try {
+    prDescription = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Generating PR description via ${providerName}...`,
+        cancellable: false
+      },
+      async () => {
+        return await generatePRDescription(
+          config.provider,
+          apiKey,
+          diffResult.diff,
+          diffResult.fileSummary,
+          config.model,
+          config.language,
+          config.ollamaUrl,
+          ruleset || undefined
+        );
+      }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    // Ollama connection error
+    if (config.provider === 'ollama' && (message.includes('ECONNREFUSED') || message.includes('fetch failed'))) {
+      vscode.window.showErrorMessage(
+        `Cannot connect to Ollama. Make sure Ollama is running at ${config.ollamaUrl}`
+      );
+      return;
+    }
+
+    if (message.includes('401') || message.includes('Unauthorized') || message.includes('invalid')) {
+      vscode.window.showErrorMessage(
+        `Invalid ${providerName} API key. Please set a valid API key.`
+      );
+      return;
+    }
+
+    if (message.includes('429') || message.includes('rate limit')) {
+      vscode.window.showErrorMessage(
+        'Rate limit exceeded. Please wait a moment and try again.'
+      );
+      return;
+    }
+
+    vscode.window.showErrorMessage(`Failed to generate PR description: ${message}`);
+    return;
+  }
+
+  // Open PR description in new editor tab
+  const doc = await vscode.workspace.openTextDocument({
+    content: prDescription,
+    language: 'markdown'
+  });
+  await vscode.window.showTextDocument(doc, { preview: false });
+
+  // Show info message with copy option
+  const action = await vscode.window.showInformationMessage(
+    'PR description generated successfully!',
+    'Copy to Clipboard'
+  );
+
+  if (action === 'Copy to Clipboard') {
+    await vscode.env.clipboard.writeText(prDescription);
+    vscode.window.showInformationMessage('PR description copied to clipboard!');
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('AI Commit Message Generator is now active');
 
@@ -401,12 +598,18 @@ export function activate(context: vscode.ExtensionContext) {
     () => setOllamaUrlCommand()
   );
 
+  const generatePRDisposable = vscode.commands.registerCommand(
+    'ai-commit-msg.generatePR',
+    () => generatePRCommand(context)
+  );
+
   context.subscriptions.push(
     generateDisposable,
     setOpenAIKeyDisposable,
     setGroqKeyDisposable,
     setGeminiKeyDisposable,
-    setOllamaUrlDisposable
+    setOllamaUrlDisposable,
+    generatePRDisposable
   );
 }
 
