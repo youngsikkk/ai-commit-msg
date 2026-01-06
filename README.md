@@ -27,6 +27,7 @@ Generate meaningful commit messages automatically using AI. Analyzes your staged
 - **Secure API key storage** using VS Code's built-in SecretStorage
 - **Configurable exclusions** to filter out noise from diffs (lock files, build artifacts, etc.)
 - **Smart handling** of existing commit messages (overwrite/append options)
+- **CLI version** - Use from terminal with `commitcraft` command
 
 ---
 
@@ -202,6 +203,63 @@ Branch `feature/PROJ-456-fix-bug` → `PROJ-456`
 | `JIRA-456-feature` | `(JIRA-\\d+)` | `JIRA-456` |
 | `issue-789/fix` | `issue-(\\d+)` | `789` |
 | `GH-101-bugfix` | `(GH-\\d+)` | `GH-101` |
+
+---
+
+## CLI Version
+
+Use CommitCraft from your terminal without VS Code!
+
+### Installation
+
+```bash
+npm install -g commitcraft-cli
+```
+
+### Quick Usage
+
+```bash
+# Stage changes and generate commit message
+git add .
+commitcraft
+
+# Auto-commit with selected message
+commitcraft --commit
+
+# Use specific provider
+commitcraft -p groq
+commitcraft -p ollama
+
+# Korean language
+commitcraft -l korean
+```
+
+### CLI Options
+
+```bash
+commitcraft generate [options]
+
+Options:
+  -p, --provider <provider>  AI provider (openai, groq, gemini, ollama)
+  -m, --model <model>        Model to use
+  -l, --language <language>  Language (english, korean)
+  -c, --commit               Auto-commit with selected message
+  --issue-pattern <pattern>  Regex to extract issue from branch
+  --issue-prefix <prefix>    Prefix for issue (e.g., #)
+```
+
+### CLI Configuration
+
+```bash
+# Interactive configuration
+commitcraft config
+
+# Or set environment variables
+export OPENAI_API_KEY="sk-..."
+export GROQ_API_KEY="gsk_..."
+```
+
+See [CLI README](cli/README.md) for detailed documentation.
 
 ---
 
