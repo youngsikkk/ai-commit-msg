@@ -2,7 +2,7 @@
   "name": "oai-commit-mesg-gen-ius-Generator",
   "displayName": "CommitCraft AI",
   "description": "AI-powered commit message generator with Conventional Commits format. Supports OpenAI, Groq, Gemini & Ollama (offline). Features: sensitive info masking, smart diff summarization, team rulesets via .commitrc.json",
-  "version": "0.2.0",
+  "version": "0.4.1",
   "publisher": "youngsikkk",
   "icon": "icon.png",
   "repository": {

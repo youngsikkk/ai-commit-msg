@@ -14,6 +14,8 @@ export interface Config {
   openaiApiKey?: string;
   groqApiKey?: string;
   geminiApiKey?: string;
+  issuePattern?: string;
+  issuePrefix?: string;
 }
 
 const CONFIG_FILE = '.commitcraftrc';
@@ -78,7 +80,9 @@ export function loadConfig(): Config {
     ollamaUrl: process.env.OLLAMA_URL || fileConfig.ollamaUrl || 'http://localhost:11434',
     openaiApiKey: process.env.OPENAI_API_KEY || fileConfig.openaiApiKey,
     groqApiKey: process.env.GROQ_API_KEY || fileConfig.groqApiKey,
-    geminiApiKey: process.env.GEMINI_API_KEY || fileConfig.geminiApiKey
+    geminiApiKey: process.env.GEMINI_API_KEY || fileConfig.geminiApiKey,
+    issuePattern: process.env.COMMITCRAFT_ISSUE_PATTERN || fileConfig.issuePattern,
+    issuePrefix: process.env.COMMITCRAFT_ISSUE_PREFIX || fileConfig.issuePrefix
   };
 }
 

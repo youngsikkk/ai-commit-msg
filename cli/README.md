@@ -115,6 +115,53 @@ COMMITCRAFT_PROVIDER=openai
 COMMITCRAFT_LANGUAGE=english
 ```
 
+## Git Hook Integration
+
+Auto-generate commit messages on every `git commit`:
+
+### Install hook
+
+```bash
+commitcraft hook install
+```
+
+### Uninstall hook
+
+```bash
+commitcraft hook uninstall
+```
+
+### Check status
+
+```bash
+commitcraft hook status
+```
+
+### How it works
+
+Once installed, CommitCraft will automatically generate a commit message when you run `git commit`. The hook:
+
+1. Detects staged changes
+2. Calls the AI provider to generate a message
+3. Pre-fills the commit message editor
+
+You can still edit the message before confirming.
+
+### Skip auto-generation
+
+The hook automatically skips when:
+- You provide a message with `-m` flag
+- It's a merge, squash, or amend commit
+- There's already a commit message
+
+### Debug mode
+
+To see hook logs, set the environment variable:
+
+```bash
+export COMMITCRAFT_HOOK_DEBUG=1
+```
+
 ## Issue Linking
 
 Extract issue numbers from branch names:

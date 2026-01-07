@@ -6,10 +6,12 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import clipboardy from 'clipboardy';
 import { simpleGit, SimpleGit } from 'simple-git';
+import fs from 'fs';
+import path from 'path';
 import { loadConfig, saveConfig, getApiKey, getDefaultModel, type Provider, type Language } from './config.js';
 import { generateCommitMessages, formatCommitMessage, type CommitMessage } from './ai.js';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.1';
 
 const git: SimpleGit = simpleGit();
 
@@ -306,5 +308,160 @@ program
   .command('config')
   .description('Configure API keys and preferences')
   .action(configCommand);
+
+// Hook commands
+const hookCommand = program
+  .command('hook')
+  .description('Manage Git hook integration');
+
+async function getGitHooksPath(): Promise<string | null> {
+  try {
+    const gitDir = await git.revparse(['--git-dir']);
+    return path.join(gitDir.trim(), 'hooks');
+  } catch {
+    return null;
+  }
+}
+
+function getHookScript(): string {
+  return `#!/bin/sh
+# CommitCraft AI - prepare-commit-msg hook
+# Auto-generates commit messages using AI
+
+# Run commitcraft-hook
+commitcraft-hook "$1" "$2" "$3"
+`;
+}
+
+hookCommand
+  .command('install')
+  .description('Install Git hook for automatic commit message generation')
+  .option('-f, --force', 'Overwrite existing hook')
+  .action(async (options: { force?: boolean }) => {
+    const hooksPath = await getGitHooksPath();
+
+    if (!hooksPath) {
+      console.error(chalk.red('\nNot a Git repository.'));
+      console.log(chalk.gray('Run this command from a Git repository.\\n'));
+      process.exit(1);
+    }
+
+    const hookPath = path.join(hooksPath, 'prepare-commit-msg');
+
+    // Check if hook already exists
+    if (fs.existsSync(hookPath) && !options.force) {
+      const existingContent = fs.readFileSync(hookPath, 'utf-8');
+
+      if (existingContent.includes('commitcraft')) {
+        console.log(chalk.yellow('\nCommitCraft hook is already installed.'));
+        console.log(chalk.gray('Use --force to reinstall.\\n'));
+        process.exit(0);
+      }
+
+      console.error(chalk.red('\nA prepare-commit-msg hook already exists.'));
+      console.log(chalk.gray('Use --force to overwrite, or manually edit the hook.\\n'));
+      process.exit(1);
+    }
+
+    // Ensure hooks directory exists
+    if (!fs.existsSync(hooksPath)) {
+      fs.mkdirSync(hooksPath, { recursive: true });
+    }
+
+    // Write the hook script
+    const hookScript = getHookScript();
+    fs.writeFileSync(hookPath, hookScript, { mode: 0o755 });
+
+    console.log(chalk.green('\n✓ Git hook installed successfully!'));
+    console.log(chalk.gray(`  Location: ${hookPath}`));
+    console.log(chalk.blue('\nNow when you run "git commit", CommitCraft will auto-generate a message.'));
+    console.log(chalk.gray('To disable, run: commitcraft hook uninstall\\n'));
+  });
+
+hookCommand
+  .command('uninstall')
+  .description('Remove Git hook')
+  .action(async () => {
+    const hooksPath = await getGitHooksPath();
+
+    if (!hooksPath) {
+      console.error(chalk.red('\nNot a Git repository.\\n'));
+      process.exit(1);
+    }
+
+    const hookPath = path.join(hooksPath, 'prepare-commit-msg');
+
+    if (!fs.existsSync(hookPath)) {
+      console.log(chalk.yellow('\nNo prepare-commit-msg hook found.\\n'));
+      process.exit(0);
+    }
+
+    const content = fs.readFileSync(hookPath, 'utf-8');
+
+    if (!content.includes('commitcraft')) {
+      console.error(chalk.red('\nThe existing hook was not installed by CommitCraft.'));
+      console.log(chalk.gray('Manually remove it if needed.\\n'));
+      process.exit(1);
+    }
+
+    fs.unlinkSync(hookPath);
+    console.log(chalk.green('\n✓ Git hook uninstalled successfully!\\n'));
+  });
+
+hookCommand
+  .command('status')
+  .description('Check Git hook status')
+  .action(async () => {
+    const hooksPath = await getGitHooksPath();
+
+    if (!hooksPath) {
+      console.error(chalk.red('\nNot a Git repository.\\n'));
+      process.exit(1);
+    }
+
+    const hookPath = path.join(hooksPath, 'prepare-commit-msg');
+
+    console.log(chalk.bold('\nCommitCraft Git Hook Status\\n'));
+
+    if (!fs.existsSync(hookPath)) {
+      console.log(chalk.yellow('Status: Not installed'));
+      console.log(chalk.gray('Run "commitcraft hook install" to enable.\\n'));
+      process.exit(0);
+    }
+
+    const content = fs.readFileSync(hookPath, 'utf-8');
+
+    if (content.includes('commitcraft')) {
+      console.log(chalk.green('Status: Installed ✓'));
+      console.log(chalk.gray(`Location: ${hookPath}`));
+
+      // Check if hook is executable (Unix-like systems)
+      if (process.platform !== 'win32') {
+        try {
+          fs.accessSync(hookPath, fs.constants.X_OK);
+          console.log(chalk.gray('Executable: Yes'));
+        } catch {
+          console.log(chalk.yellow('Executable: No (may need: chmod +x)'));
+        }
+      }
+
+      // Show config status
+      const config = loadConfig();
+      console.log(chalk.gray(`Provider: ${config.provider}`));
+      console.log(chalk.gray(`Model: ${config.model || getDefaultModel(config.provider)}`));
+
+      const apiKey = getApiKey(config);
+      if (apiKey) {
+        console.log(chalk.gray('API Key: Configured'));
+      } else {
+        console.log(chalk.yellow('API Key: Not configured'));
+      }
+    } else {
+      console.log(chalk.yellow('Status: Different hook installed'));
+      console.log(chalk.gray('A non-CommitCraft hook exists at this location.'));
+    }
+
+    console.log();
+  });
 
 program.parse();

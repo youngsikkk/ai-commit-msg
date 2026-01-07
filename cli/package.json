@@ -1,6 +1,6 @@
 {
   "name": "craftcommit-cli",
-  "version": "0.3.0",
+  "version": "0.4.1",
   "description": "Generate AI-powered commit messages from terminal",
   "author": "youngsikkk",
   "license": "MIT",
@@ -20,7 +20,8 @@
     "cli"
   ],
   "bin": {
-    "commitcraft": "./dist/cli.js"
+    "commitcraft": "./dist/cli.js",
+    "commitcraft-hook": "./dist/hook.js"
   },
   "main": "./dist/cli.js",
   "type": "module",
