@@ -14,36 +14,41 @@ Output format:
 ## Changes
 <Bullet list of main changes>
 
+## Impact
+<Affected areas and expected behavior impact>
+
+## Risk
+<Risk level, risk factors, and reviewer attention points>
+
 ## Testing
 <How to test these changes>
+
+## Validation
+<Automated validation result if provided, otherwise say not run>
+
+## Suggested Commit Split
+<Optional split recommendation when the change mixes unrelated areas>
+
+## Deployment Checklist
+<Optional pre-deploy checklist for risky changes>
 
 Rules:
 - Title should be concise and descriptive (max 50 chars)
 - Summary should explain the "why" and "what" of the changes
 - Changes should be a bullet list of the main modifications
+- Impact should explain affected modules, users, data, or runtime behavior
+- Risk should use the provided automated analysis context when available
 - Testing should include specific steps or scenarios to verify the changes
+- Validation should summarize configured validation commands and failures when provided
+- Include Suggested Commit Split and Deployment Checklist when they are present in the automated context
 - Use clear, professional language`;
 
-const PR_SYSTEM_PROMPT_KO = `You are a PR description generator. Analyze the git diff and generate a well-structured PR description in markdown format.
+const PR_SYSTEM_PROMPT_KO = `${PR_SYSTEM_PROMPT_EN}
 
-Output format:
-# <Title: 짧은 요약, 최대 50자>
-
-## 요약
-<이 PR이 무엇을 하는지 2-3문장으로 설명>
-
-## 변경 사항
-<주요 변경 사항 bullet list>
-
-## 테스트
-<변경 사항을 테스트하는 방법>
-
-Rules:
-- Title은 간결하고 설명적이어야 합니다 (최대 50자)
-- 요약은 변경의 "왜"와 "무엇"을 설명해야 합니다
-- 변경 사항은 주요 수정 사항의 bullet list여야 합니다
-- 테스트는 변경 사항을 확인하는 구체적인 단계나 시나리오를 포함해야 합니다
-- 명확하고 전문적인 언어를 사용하세요`;
+Language:
+- Write the title and body content in Korean.
+- Keep markdown headings in English so GitHub, GitLab, and Bitbucket templates stay easy to scan.
+- Keep Conventional Commit style words such as feat, fix, chore, and docs in English when mentioned.`;
 
 function getPRSystemPrompt(language: Language, ruleset?: CommitRuleset): string {
   let basePrompt = language === 'korean' ? PR_SYSTEM_PROMPT_KO : PR_SYSTEM_PROMPT_EN;
@@ -55,24 +60,27 @@ function getPRSystemPrompt(language: Language, ruleset?: CommitRuleset): string 
   return basePrompt;
 }
 
-function buildPRUserPrompt(diff: string, fileSummary: string): string {
+function buildPRUserPrompt(diff: string, fileSummary: string, analysisContext?: string): string {
   return `Generate a PR description for the following changes:
 
 ## Files Changed:
 ${fileSummary || 'No files changed'}
 
+## Automated Analysis Context:
+${analysisContext || 'No automated impact/risk/validation context provided'}
+
 ## Diff:
 ${diff || 'No diff available'}`;
 }
 
-// OpenAI PR description generation
 async function generatePRWithOpenAI(
   apiKey: string,
   model: string,
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  analysisContext?: string
 ): Promise<string> {
   const client = new OpenAI({ apiKey });
 
@@ -80,10 +88,10 @@ async function generatePRWithOpenAI(
     model,
     messages: [
       { role: 'system', content: getPRSystemPrompt(language, ruleset) },
-      { role: 'user', content: buildPRUserPrompt(diff, fileSummary) }
+      { role: 'user', content: buildPRUserPrompt(diff, fileSummary, analysisContext) }
     ],
     temperature: 0.7,
-    max_tokens: 1000
+    max_tokens: 1400
   });
 
   const content = response.choices[0]?.message?.content;
@@ -94,14 +102,14 @@ async function generatePRWithOpenAI(
   return content.trim();
 }
 
-// Groq PR description generation
 async function generatePRWithGroq(
   apiKey: string,
   model: string,
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  analysisContext?: string
 ): Promise<string> {
   const client = new OpenAI({
     apiKey,
@@ -112,10 +120,10 @@ async function generatePRWithGroq(
     model,
     messages: [
       { role: 'system', content: getPRSystemPrompt(language, ruleset) },
-      { role: 'user', content: buildPRUserPrompt(diff, fileSummary) }
+      { role: 'user', content: buildPRUserPrompt(diff, fileSummary, analysisContext) }
     ],
     temperature: 0.7,
-    max_tokens: 1000
+    max_tokens: 1400
   });
 
   const content = response.choices[0]?.message?.content;
@@ -126,27 +134,27 @@ async function generatePRWithGroq(
   return content.trim();
 }
 
-// Gemini PR description generation
 async function generatePRWithGemini(
   apiKey: string,
   model: string,
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  analysisContext?: string
 ): Promise<string> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const geminiModel = genAI.getGenerativeModel({
     model,
     generationConfig: {
       temperature: 0.7,
-      maxOutputTokens: 1000
+      maxOutputTokens: 1400
     }
   });
 
   const prompt = `${getPRSystemPrompt(language, ruleset)}
 
-${buildPRUserPrompt(diff, fileSummary)}`;
+${buildPRUserPrompt(diff, fileSummary, analysisContext)}`;
 
   const result = await geminiModel.generateContent(prompt);
   const response = result.response;
@@ -159,14 +167,14 @@ ${buildPRUserPrompt(diff, fileSummary)}`;
   return text.trim();
 }
 
-// Ollama PR description generation
 async function generatePRWithOllama(
   ollamaUrl: string,
   model: string,
   diff: string,
   fileSummary: string,
   language: Language,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  analysisContext?: string
 ): Promise<string> {
   const response = await fetch(`${ollamaUrl}/api/chat`, {
     method: 'POST',
@@ -175,7 +183,7 @@ async function generatePRWithOllama(
       model,
       messages: [
         { role: 'system', content: getPRSystemPrompt(language, ruleset) },
-        { role: 'user', content: buildPRUserPrompt(diff, fileSummary) }
+        { role: 'user', content: buildPRUserPrompt(diff, fileSummary, analysisContext) }
       ],
       stream: false
     })
@@ -198,7 +206,6 @@ async function generatePRWithOllama(
   return content.trim();
 }
 
-// Provider dispatcher for PR description generation
 export async function generatePRDescription(
   provider: Provider,
   apiKey: string,
@@ -207,18 +214,67 @@ export async function generatePRDescription(
   model: string,
   language: Language,
   ollamaUrl?: string,
-  ruleset?: CommitRuleset
+  ruleset?: CommitRuleset,
+  analysisContext?: string
 ): Promise<string> {
   switch (provider) {
     case 'openai':
-      return generatePRWithOpenAI(apiKey, model, diff, fileSummary, language, ruleset);
+      return generatePRWithOpenAI(apiKey, model, diff, fileSummary, language, ruleset, analysisContext);
     case 'groq':
-      return generatePRWithGroq(apiKey, model, diff, fileSummary, language, ruleset);
+      return generatePRWithGroq(apiKey, model, diff, fileSummary, language, ruleset, analysisContext);
     case 'gemini':
-      return generatePRWithGemini(apiKey, model, diff, fileSummary, language, ruleset);
+      return generatePRWithGemini(apiKey, model, diff, fileSummary, language, ruleset, analysisContext);
     case 'ollama':
-      return generatePRWithOllama(ollamaUrl || 'http://localhost:11434', model, diff, fileSummary, language, ruleset);
+      return generatePRWithOllama(ollamaUrl || 'http://localhost:11434', model, diff, fileSummary, language, ruleset, analysisContext);
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
+}
+
+function hasMarkdownHeading(markdown: string, heading: string): boolean {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^##\\s+${escaped}\\b`, 'im').test(markdown);
+}
+
+function extractMarkdownSection(markdown: string, heading: string): string | undefined {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^##\\s+${escaped}\\b.*$`, 'im').exec(markdown);
+
+  if (!match || match.index === undefined) {
+    return undefined;
+  }
+
+  const sectionStart = match.index;
+  const remainder = markdown.slice(sectionStart + match[0].length);
+  const nextHeadingMatch = /^##\s+/m.exec(remainder);
+  const sectionEnd = nextHeadingMatch
+    ? sectionStart + match[0].length + nextHeadingMatch.index
+    : markdown.length;
+
+  return markdown.slice(sectionStart, sectionEnd).trim();
+}
+
+export function ensurePRAnalysisSections(description: string, automatedAnalysisMarkdown?: string): string {
+  if (!automatedAnalysisMarkdown) {
+    return description;
+  }
+
+  const missingCoreSection = ['Impact', 'Risk', 'Validation'].some(section => {
+    return !hasMarkdownHeading(description, section);
+  });
+
+  if (missingCoreSection) {
+    return `${description.trim()}\n\n---\n\n${automatedAnalysisMarkdown.trim()}`;
+  }
+
+  const missingOptionalSections = ['Suggested Commit Split', 'Deployment Checklist']
+    .filter(section => !hasMarkdownHeading(description, section))
+    .map(section => extractMarkdownSection(automatedAnalysisMarkdown, section))
+    .filter((section): section is string => Boolean(section));
+
+  if (missingOptionalSections.length === 0) {
+    return description;
+  }
+
+  return `${description.trim()}\n\n---\n\n${missingOptionalSections.join('\n\n')}`;
 }

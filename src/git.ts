@@ -200,3 +200,17 @@ export async function getUncommittedDiff(
     truncated
   };
 }
+
+export async function getRecentCommitSubjects(
+  workspacePath: string,
+  maxCount: number = 20
+): Promise<string[]> {
+  const git = createGit(workspacePath);
+  const safeCount = Math.max(1, Math.min(maxCount, 100));
+  const log = await git.raw(['log', `-n${safeCount}`, '--pretty=format:%s']);
+
+  return log
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+}

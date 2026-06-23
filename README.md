@@ -17,12 +17,19 @@ Generate meaningful commit messages automatically using AI. Analyzes your staged
 - **Multi-provider support** - Choose from OpenAI, Groq, Google Gemini, or **Ollama (offline)**
 - **3 commit message candidates** - Pick the best one from AI-generated options
 - **PR description generation** - Auto-generate structured PR descriptions from your changes
+- **Impact & risk analysis** - Detect affected areas, risky change types, review focus, and suggested tests
+- **Optional validation checks** - Detect and run lint/test/typecheck commands before PR description generation
+- **PR copy helpers** - Copy PR title, copy PR body, copy all markdown, or save `PR.md`
+- **Suggested commit split** - Warn when a diff looks like it should be split into smaller commits
+- **Deployment checklist** - Add pre-deploy checklist items for high-risk changes
 - **Issue linking** - Auto-detect issue numbers from branch names (GitHub, GitLab, JIRA)
 - **Korean language support** - Generate commit messages in Korean
 - **Conventional Commits format** for consistent, semantic versioning friendly messages
 - **Sensitive information masking** - Automatically masks API keys, passwords, tokens before sending to AI
 - **Smart diff summarization** - AI summarizes large diffs for better commit messages
 - **Team ruleset support** - Enforce commit conventions via `.commitrc.json`
+- **Team ruleset wizard** - Create `.commitrc.json` from VS Code command palette
+- **Release notes draft** - Generate a simple draft from recent Conventional Commits
 - **Multi-repo workspace support** with repository picker
 - **Secure API key storage** using VS Code's built-in SecretStorage
 - **Configurable exclusions** to filter out noise from diffs (lock files, build artifacts, etc.)
@@ -59,9 +66,31 @@ Automatically generate well-structured PR descriptions with:
 - Title (max 50 chars)
 - Summary section
 - Changes bullet list
+- Impact and risk sections
+- Review focus and testing suggestions
+- Optional validation command results
+- Suggested commit split when the change mixes unrelated areas
+- Deployment checklist for risky changes
 - Testing instructions
 
-Opens in a new editor tab with "Copy to Clipboard" option.
+Opens in a new editor tab with actions for `Copy PR Title`, `Copy PR Body`, `Copy All`, and `Save PR.md`.
+
+### Impact & Risk Analysis
+PR descriptions can include local impact and risk analysis before you publish a PR:
+- Detects risky areas such as auth, database migrations, deployment/infra, CI/CD, dependencies, and API contracts
+- Scores risk as Low, Medium, or High based on file blast radius, changed lines, and risk signals
+- Suggests review focus points and test scenarios
+- Suggests commit splits when the diff spans unrelated areas
+- Adds deployment checklist items for high-risk or deployment-sensitive changes
+- Warns in VS Code when a high-risk change is detected
+
+### Optional Validation Checks
+Configure commands such as lint, tests, or type checks to run before generating a PR description:
+- Disabled by default for safety
+- Uses `aiCommit.validationCommands` when configured
+- If no commands are configured, detects common `package.json` scripts such as `lint`, `test`, `typecheck`, and `check-types`
+- Prompts before running detected commands
+- Includes pass/fail results in the generated PR description
 
 ### Issue Linking
 Automatically extract issue numbers from branch names and include them in commit messages:
@@ -110,6 +139,11 @@ Example: Branch `feature/123-add-login` → Commit: `feat(auth): add login valid
 | `aiCommit.largeDiffThreshold` | number | `8000` | Character threshold for diff summarization |
 | `aiCommit.issuePrefix` | string | `""` | Prefix for issue references (e.g., `#`, `JIRA-`) |
 | `aiCommit.issueBranchPattern` | string | `""` | Regex to extract issue from branch name |
+| `aiCommit.includeImpactRiskAnalysis` | boolean | `true` | Include local impact/risk analysis in PR descriptions |
+| `aiCommit.runValidationBeforePR` | boolean | `false` | Run configured validation commands before PR generation |
+| `aiCommit.validationCommands` | array | `[]` | Commands to run, e.g. `["npm.cmd run lint", "npm.cmd test"]` |
+| `aiCommit.validationTimeoutMs` | number | `120000` | Timeout per validation command |
+| `aiCommit.maxValidationOutputChars` | number | `4000` | Max output chars captured per validation command |
 
 ### Default Models by Provider
 
@@ -125,6 +159,21 @@ Example: Branch `feature/123-add-login` → Commit: `feat(auth): add login valid
 ```json
 ["node_modules", "*.lock", "dist", "build", "*.min.*"]
 ```
+
+### PR Risk & Validation Example
+
+```json
+{
+  "aiCommit.includeImpactRiskAnalysis": true,
+  "aiCommit.runValidationBeforePR": true,
+  "aiCommit.validationCommands": [
+    "npm.cmd run lint",
+    "npm.cmd run check-types"
+  ]
+}
+```
+
+When enabled, generated PR descriptions include `Impact`, `Risk`, `Review Focus`, `Testing`, `Validation`, `Suggested Commit Split`, and `Deployment Checklist` sections when applicable.
 
 ---
 
@@ -232,12 +281,18 @@ commitcraft -p ollama
 
 # Korean language
 commitcraft -l korean
+
+# Generate PR markdown from staged + unstaged changes
+commitcraft pr
+commitcraft pr --copy
+commitcraft pr --output PR.md
 ```
 
 ### CLI Options
 
 ```bash
 commitcraft generate [options]
+commitcraft pr [options]
 
 Options:
   -p, --provider <provider>  AI provider (openai, groq, gemini, ollama)
@@ -246,6 +301,12 @@ Options:
   -c, --commit               Auto-commit with selected message
   --issue-pattern <pattern>  Regex to extract issue from branch
   --issue-prefix <prefix>    Prefix for issue (e.g., #)
+
+PR options:
+  --copy                     Copy generated PR markdown to clipboard
+  -o, --output <file>        Save generated PR markdown to a file
+  --validate                 Run detected validation commands without prompting
+  --no-validation-prompt     Skip detected validation command prompt
 ```
 
 ### CLI Configuration
@@ -286,6 +347,8 @@ See [CLI README](cli/README.md) for detailed documentation.
 |---------|-------------|
 | `AI Commit: Generate` | Generate commit message from staged changes |
 | `AI Commit: Generate PR Description` | Generate PR description from uncommitted changes |
+| `AI Commit: Create Team Ruleset` | Create `.commitrc.json` with guided options |
+| `AI Commit: Generate Release Notes` | Draft release notes from recent commits |
 | `AI Commit: Set OpenAI API Key` | Set/update OpenAI API key |
 | `AI Commit: Set Groq API Key` | Set/update Groq API key |
 | `AI Commit: Set Gemini API Key` | Set/update Gemini API key |

@@ -17,3 +17,9 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Local presentation / planning docs
+PRESENTATION_*.md
+USAGE_ENTERPRISE_AX_GUIDE.md
+presentation*.md
+presentaion*.md

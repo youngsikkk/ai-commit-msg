@@ -260,6 +260,155 @@ export async function generateCommitMessages(
   }
 }
 
+const PR_SYSTEM_PROMPT_EN = `You are a PR description generator. Analyze the git diff and generate a well-structured PR description in markdown format.
+
+Output format:
+# <Title: short summary, max 50 chars>
+
+## Summary
+<What this PR does in 2-3 sentences>
+
+## Changes
+<Bullet list of main changes>
+
+## Impact
+<Affected areas and expected behavior impact>
+
+## Risk
+<Risk level, risk factors, and reviewer attention points>
+
+## Testing
+<How to test these changes>
+
+## Validation
+<Automated validation result if provided, otherwise say not run>
+
+## Suggested Commit Split
+<Optional split recommendation when the change mixes unrelated areas>
+
+## Deployment Checklist
+<Optional pre-deploy checklist for risky changes>
+
+Rules:
+- Use the automated analysis context when available
+- Keep the title concise and descriptive
+- Include specific testing and deployment notes for risky changes
+- Use clear, professional language`;
+
+const PR_SYSTEM_PROMPT_KO = `${PR_SYSTEM_PROMPT_EN}
+
+Language:
+- Write the title and body content in Korean.
+- Keep markdown headings in English.
+- Keep Conventional Commit style words such as feat, fix, chore, and docs in English when mentioned.`;
+
+function getPRSystemPrompt(language: Language): string {
+  return language === 'korean' ? PR_SYSTEM_PROMPT_KO : PR_SYSTEM_PROMPT_EN;
+}
+
+function buildPRPrompt(diff: string, fileSummary: string, analysisContext: string): string {
+  return `Generate a PR description for the following changes:
+
+## Files Changed:
+${fileSummary || 'No files changed'}
+
+## Automated Analysis Context:
+${analysisContext || 'No automated impact/risk/validation context provided'}
+
+## Diff:
+${diff || 'No diff available'}`;
+}
+
+export async function generatePRDescription(
+  provider: Provider,
+  apiKey: string,
+  diff: string,
+  fileSummary: string,
+  model: string,
+  language: Language,
+  ollamaUrl: string | undefined,
+  analysisContext: string
+): Promise<string> {
+  if (provider === 'openai' || provider === 'groq') {
+    const client = new OpenAI({
+      apiKey,
+      ...(provider === 'groq' ? { baseURL: 'https://api.groq.com/openai/v1' } : {})
+    });
+
+    const response = await client.chat.completions.create({
+      model,
+      messages: [
+        { role: 'system', content: getPRSystemPrompt(language) },
+        { role: 'user', content: buildPRPrompt(diff, fileSummary, analysisContext) }
+      ],
+      temperature: 0.7,
+      max_tokens: 1400
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      throw new Error(`Empty response from ${provider}`);
+    }
+
+    return content.trim();
+  }
+
+  if (provider === 'gemini') {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const geminiModel = genAI.getGenerativeModel({
+      model,
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 1400
+      }
+    });
+
+    const result = await geminiModel.generateContent(`${getPRSystemPrompt(language)}
+
+${buildPRPrompt(diff, fileSummary, analysisContext)}`);
+    const text = result.response.text();
+
+    if (!text) {
+      throw new Error('Empty response from Gemini');
+    }
+
+    return text.trim();
+  }
+
+  if (provider === 'ollama') {
+    const response = await fetch(`${ollamaUrl || 'http://localhost:11434'}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: getPRSystemPrompt(language) },
+          { role: 'user', content: buildPRPrompt(diff, fileSummary, analysisContext) }
+        ],
+        stream: false
+      })
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(`Model "${model}" not found. Run: ollama pull ${model}`);
+      }
+      throw new Error(`Ollama request failed: ${response.status}`);
+    }
+
+    const data = await response.json() as { message?: { content?: string } };
+    const content = data.message?.content;
+
+    if (!content) {
+      throw new Error('Empty response from Ollama');
+    }
+
+    return content.trim();
+  }
+
+  throw new Error(`Unknown provider: ${provider}`);
+}
+
 export function formatCommitMessage(commit: CommitMessage): string {
   if (commit.scope) {
     return `${commit.type}(${commit.scope}): ${commit.subject}`;

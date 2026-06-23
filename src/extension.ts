@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { getApiKeyForProvider, promptForApiKeyForProvider, promptForOllamaUrl, getConfig } from './config';
-import { hasStagedChanges, getStagedDiff, hasUncommittedChanges, getUncommittedDiff, getCurrentBranch } from './git';
+import { hasStagedChanges, getStagedDiff, hasUncommittedChanges, getUncommittedDiff, getCurrentBranch, getRecentCommitSubjects } from './git';
 import { generateCommitMessageCandidates, formatCommitMessage, summarizeDiff } from './ai';
 import { loadRuleset, validateAgainstRuleset } from './ruleset';
-import { generatePRDescription } from './pr';
+import { ensurePRAnalysisSections, generatePRDescription } from './pr';
 import { getIssueReferenceFromBranch } from './issue';
-import type { CommitMessage, Config, DiffResult, Provider } from './types';
+import { analyzeDiff, formatAutomatedAnalysisMarkdown } from './analysis';
+import { detectValidationCommands, runValidationCommands } from './validation';
+import { VALID_COMMIT_TYPES } from './types';
+import type { CommitMessage, CommitType, Config, DiffResult, Language, Provider, ValidationReport } from './types';
 import type { CommitRuleset } from './ruleset';
 
 interface GitExtension {
@@ -72,6 +75,112 @@ async function selectRepository(git: GitAPI): Promise<Repository | undefined> {
   });
 
   return picked?.repo;
+}
+
+function extractPRTitle(markdown: string): string {
+  const heading = markdown
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(line => line.startsWith('# '));
+
+  if (heading) {
+    return heading.replace(/^#\s+/, '').trim();
+  }
+
+  return markdown.split(/\r?\n/).find(line => line.trim())?.trim() || 'PR Description';
+}
+
+function extractPRBody(markdown: string): string {
+  const lines = markdown.split(/\r?\n/);
+  const firstTitleIndex = lines.findIndex(line => line.trim().startsWith('# '));
+
+  if (firstTitleIndex === -1) {
+    return markdown.trim();
+  }
+
+  return lines
+    .filter((_, index) => index !== firstTitleIndex)
+    .join('\n')
+    .replace(/^\s+/, '')
+    .trim();
+}
+
+async function saveMarkdownFile(workspacePath: string, fileName: string, content: string): Promise<void> {
+  const target = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(workspacePath, fileName)),
+    filters: {
+      Markdown: ['md']
+    }
+  });
+
+  if (!target) {
+    return;
+  }
+
+  await vscode.workspace.fs.writeFile(target, Buffer.from(content, 'utf-8'));
+  vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}`);
+}
+
+async function promptForValidationRun(workspacePath: string, config: Config): Promise<string[]> {
+  if (config.validationCommands.length > 0) {
+    return config.runValidationBeforePR ? config.validationCommands : [];
+  }
+
+  const detectedCommands = await detectValidationCommands(workspacePath);
+
+  if (config.runValidationBeforePR) {
+    return detectedCommands;
+  }
+
+  if (detectedCommands.length === 0) {
+    return [];
+  }
+
+  const picked = await vscode.window.showQuickPick(
+    [
+      {
+        label: 'Run detected validation',
+        description: detectedCommands.join(' | '),
+        run: true
+      },
+      {
+        label: 'Skip validation',
+        description: 'Generate PR description without running local commands',
+        run: false
+      }
+    ],
+    {
+      title: 'Detected validation commands',
+      placeHolder: 'Run before PR generation?'
+    }
+  );
+
+  return picked?.run ? detectedCommands : [];
+}
+
+async function handleGeneratedPRActions(workspacePath: string, prDescription: string): Promise<void> {
+  const title = extractPRTitle(prDescription);
+  const body = extractPRBody(prDescription);
+  const action = await vscode.window.showInformationMessage(
+    'PR description generated successfully!',
+    'Copy PR Title',
+    'Copy PR Body',
+    'Copy All',
+    'Save PR.md'
+  );
+
+  if (action === 'Copy PR Title') {
+    await vscode.env.clipboard.writeText(title);
+    vscode.window.showInformationMessage('PR title copied to clipboard.');
+  } else if (action === 'Copy PR Body') {
+    await vscode.env.clipboard.writeText(body);
+    vscode.window.showInformationMessage('PR body copied to clipboard.');
+  } else if (action === 'Copy All') {
+    await vscode.env.clipboard.writeText(prDescription);
+    vscode.window.showInformationMessage('PR markdown copied to clipboard.');
+  } else if (action === 'Save PR.md') {
+    await saveMarkdownFile(workspacePath, 'PR.md', prDescription);
+  }
 }
 
 async function handleExistingText(
@@ -467,6 +576,45 @@ async function generatePRCommand(context: vscode.ExtensionContext): Promise<void
     return;
   }
 
+  let automatedAnalysisMarkdown: string | undefined;
+  if (config.includeImpactRiskAnalysis) {
+    const impactRiskAnalysis = analyzeDiff(diffResult.diff, diffResult.fileSummary);
+    let validationReport: ValidationReport | undefined;
+    const validationCommands = await promptForValidationRun(workspacePath, config);
+
+    if (validationCommands.length > 0) {
+      validationReport = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Running validation commands...',
+          cancellable: false
+        },
+        async () => {
+          return await runValidationCommands(
+            workspacePath,
+            validationCommands,
+            config.validationTimeoutMs,
+            config.maxValidationOutputChars
+          );
+        }
+      );
+
+      if (validationReport.enabled && validationReport.failed > 0) {
+        vscode.window.showWarningMessage(
+          `Validation found ${validationReport.failed} failing command(s). The PR description will include the failures.`
+        );
+      }
+    }
+
+    automatedAnalysisMarkdown = formatAutomatedAnalysisMarkdown(impactRiskAnalysis, validationReport);
+
+    if (impactRiskAnalysis.riskLevel === 'high') {
+      vscode.window.showWarningMessage(
+        `High-risk change detected (${impactRiskAnalysis.riskScore}/100). Review the generated PR risk section before merging.`
+      );
+    }
+  }
+
   // Summarize large diffs if enabled
   if (config.summarizeLargeDiff && diffResult.diff.length > config.largeDiffThreshold) {
     try {
@@ -518,10 +666,13 @@ async function generatePRCommand(context: vscode.ExtensionContext): Promise<void
           config.model,
           config.language,
           config.ollamaUrl,
-          ruleset || undefined
+          ruleset || undefined,
+          automatedAnalysisMarkdown
         );
       }
     );
+
+    prDescription = ensurePRAnalysisSections(prDescription, automatedAnalysisMarkdown);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -558,15 +709,246 @@ async function generatePRCommand(context: vscode.ExtensionContext): Promise<void
   });
   await vscode.window.showTextDocument(doc, { preview: false });
 
-  // Show info message with copy option
-  const action = await vscode.window.showInformationMessage(
-    'PR description generated successfully!',
-    'Copy to Clipboard'
+  await handleGeneratedPRActions(workspacePath, prDescription);
+}
+
+async function createRulesetCommand(): Promise<void> {
+  const git = await getGitAPI();
+  if (!git) {
+    vscode.window.showErrorMessage('Git extension not found. Please install the Git extension.');
+    return;
+  }
+
+  const repo = await selectRepository(git);
+  if (!repo) {
+    return;
+  }
+
+  const workspacePath = repo.rootUri.fsPath;
+  const rulesetUri = vscode.Uri.file(path.join(workspacePath, '.commitrc.json'));
+
+  try {
+    await vscode.workspace.fs.stat(rulesetUri);
+    const overwrite = await vscode.window.showWarningMessage(
+      '.commitrc.json already exists.',
+      'Overwrite',
+      'Cancel'
+    );
+
+    if (overwrite !== 'Overwrite') {
+      return;
+    }
+  } catch {
+    // File does not exist yet.
+  }
+
+  const pickedTypes = await vscode.window.showQuickPick(
+    VALID_COMMIT_TYPES.map(type => ({
+      label: type,
+      picked: ['feat', 'fix', 'docs', 'refactor', 'test', 'chore'].includes(type)
+    })),
+    {
+      title: 'Allowed commit types',
+      canPickMany: true,
+      placeHolder: 'Select commit types this team allows'
+    }
   );
 
-  if (action === 'Copy to Clipboard') {
-    await vscode.env.clipboard.writeText(prDescription);
-    vscode.window.showInformationMessage('PR description copied to clipboard!');
+  if (!pickedTypes || pickedTypes.length === 0) {
+    return;
+  }
+
+  const scopesInput = await vscode.window.showInputBox({
+    title: 'Allowed scopes',
+    prompt: 'Comma-separated scopes. Leave empty to allow any scope.',
+    placeHolder: 'api, auth, ui, db, config'
+  });
+
+  if (scopesInput === undefined) {
+    return;
+  }
+
+  const scopeRequirement = await vscode.window.showQuickPick(
+    [
+      { label: 'Scope optional', value: false },
+      { label: 'Scope required', value: true }
+    ],
+    {
+      title: 'Scope rule',
+      placeHolder: 'Should every commit message include a scope?'
+    }
+  );
+
+  if (!scopeRequirement) {
+    return;
+  }
+
+  const maxSubjectInput = await vscode.window.showInputBox({
+    title: 'Max subject length',
+    prompt: 'Recommended: 72',
+    value: '72',
+    validateInput: value => {
+      const parsed = Number(value);
+      return Number.isInteger(parsed) && parsed > 0 && parsed <= 200
+        ? undefined
+        : 'Enter a number from 1 to 200';
+    }
+  });
+
+  if (!maxSubjectInput) {
+    return;
+  }
+
+  const languagePick = await vscode.window.showQuickPick(
+    [
+      { label: 'english', value: 'english' as Language },
+      { label: 'korean', value: 'korean' as Language }
+    ],
+    {
+      title: 'Commit message language',
+      placeHolder: 'Select subject language'
+    }
+  );
+
+  if (!languagePick) {
+    return;
+  }
+
+  const allowedScopes = scopesInput
+    .split(',')
+    .map(scope => scope.trim())
+    .filter(Boolean);
+
+  const ruleset = {
+    allowedTypes: pickedTypes.map(type => type.label as CommitType),
+    requireScope: scopeRequirement.value,
+    allowedScopes: allowedScopes.length > 0 ? allowedScopes : undefined,
+    maxSubjectLength: Number(maxSubjectInput),
+    language: languagePick.value
+  };
+
+  await vscode.workspace.fs.writeFile(
+    rulesetUri,
+    Buffer.from(JSON.stringify(ruleset, null, 2) + '\n', 'utf-8')
+  );
+
+  const doc = await vscode.workspace.openTextDocument(rulesetUri);
+  await vscode.window.showTextDocument(doc, { preview: false });
+  vscode.window.showInformationMessage('Team ruleset created: .commitrc.json');
+}
+
+function formatReleaseNotesFromSubjects(subjects: string[]): string {
+  const groups: Record<string, string[]> = {
+    Features: [],
+    Fixes: [],
+    Documentation: [],
+    Tests: [],
+    Build: [],
+    Chores: [],
+    Other: []
+  };
+
+  for (const subject of subjects) {
+    const match = subject.match(/^(\w+)(?:\([^)]+\))?:\s*(.+)$/);
+    const type = match?.[1];
+    const text = match?.[2] || subject;
+
+    switch (type) {
+      case 'feat':
+        groups.Features.push(text);
+        break;
+      case 'fix':
+        groups.Fixes.push(text);
+        break;
+      case 'docs':
+        groups.Documentation.push(text);
+        break;
+      case 'test':
+        groups.Tests.push(text);
+        break;
+      case 'build':
+      case 'ci':
+        groups.Build.push(text);
+        break;
+      case 'chore':
+      case 'refactor':
+      case 'style':
+      case 'perf':
+        groups.Chores.push(text);
+        break;
+      default:
+        groups.Other.push(subject);
+        break;
+    }
+  }
+
+  const sections = Object.entries(groups)
+    .filter(([, items]) => items.length > 0)
+    .map(([heading, items]) => {
+      return `## ${heading}\n${items.map(item => `- ${item}`).join('\n')}`;
+    });
+
+  return `# Release Notes Draft
+
+${sections.length > 0 ? sections.join('\n\n') : '- No recent commits found.'}
+`;
+}
+
+async function generateReleaseNotesCommand(): Promise<void> {
+  const git = await getGitAPI();
+  if (!git) {
+    vscode.window.showErrorMessage('Git extension not found. Please install the Git extension.');
+    return;
+  }
+
+  const repo = await selectRepository(git);
+  if (!repo) {
+    return;
+  }
+
+  const maxCountInput = await vscode.window.showInputBox({
+    title: 'Release notes source',
+    prompt: 'How many recent commits should be used?',
+    value: '20',
+    validateInput: value => {
+      const parsed = Number(value);
+      return Number.isInteger(parsed) && parsed > 0 && parsed <= 100
+        ? undefined
+        : 'Enter a number from 1 to 100';
+    }
+  });
+
+  if (!maxCountInput) {
+    return;
+  }
+
+  let subjects: string[];
+  try {
+    subjects = await getRecentCommitSubjects(repo.rootUri.fsPath, Number(maxCountInput));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`Failed to read recent commits: ${message}`);
+    return;
+  }
+
+  const markdown = formatReleaseNotesFromSubjects(subjects);
+  const doc = await vscode.workspace.openTextDocument({
+    content: markdown,
+    language: 'markdown'
+  });
+  await vscode.window.showTextDocument(doc, { preview: false });
+
+  const action = await vscode.window.showInformationMessage(
+    'Release notes draft generated.',
+    'Copy',
+    'Save RELEASE_NOTES.md'
+  );
+
+  if (action === 'Copy') {
+    await vscode.env.clipboard.writeText(markdown);
+    vscode.window.showInformationMessage('Release notes copied to clipboard.');
+  } else if (action === 'Save RELEASE_NOTES.md') {
+    await saveMarkdownFile(repo.rootUri.fsPath, 'RELEASE_NOTES.md', markdown);
   }
 }
 
@@ -603,13 +985,25 @@ export function activate(context: vscode.ExtensionContext) {
     () => generatePRCommand(context)
   );
 
+  const createRulesetDisposable = vscode.commands.registerCommand(
+    'ai-commit-msg.createRuleset',
+    () => createRulesetCommand()
+  );
+
+  const generateReleaseNotesDisposable = vscode.commands.registerCommand(
+    'ai-commit-msg.generateReleaseNotes',
+    () => generateReleaseNotesCommand()
+  );
+
   context.subscriptions.push(
     generateDisposable,
     setOpenAIKeyDisposable,
     setGroqKeyDisposable,
     setGeminiKeyDisposable,
     setOllamaUrlDisposable,
-    generatePRDisposable
+    generatePRDisposable,
+    createRulesetDisposable,
+    generateReleaseNotesDisposable
   );
 }
 

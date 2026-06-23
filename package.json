@@ -53,6 +53,14 @@
       {
         "command": "ai-commit-msg.generatePR",
         "title": "AI Commit: Generate PR Description"
+      },
+      {
+        "command": "ai-commit-msg.createRuleset",
+        "title": "AI Commit: Create Team Ruleset"
+      },
+      {
+        "command": "ai-commit-msg.generateReleaseNotes",
+        "title": "AI Commit: Generate Release Notes"
       }
     ],
     "configuration": {
@@ -126,6 +134,34 @@
           "type": "string",
           "default": "",
           "description": "Regex pattern to extract issue from branch name (e.g., 'feature/(\\d+)' or '(JIRA-\\d+)')"
+        },
+        "aiCommit.includeImpactRiskAnalysis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include local impact and risk analysis in generated PR descriptions"
+        },
+        "aiCommit.runValidationBeforePR": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run configured validation commands before generating PR descriptions"
+        },
+        "aiCommit.validationCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Workspace commands to run before PR generation when validation is enabled (e.g., npm.cmd run lint, npm.cmd test)"
+        },
+        "aiCommit.validationTimeoutMs": {
+          "type": "number",
+          "default": 120000,
+          "description": "Timeout in milliseconds for each validation command"
+        },
+        "aiCommit.maxValidationOutputChars": {
+          "type": "number",
+          "default": 4000,
+          "description": "Maximum output characters to include from each validation command"
         }
       }
     },

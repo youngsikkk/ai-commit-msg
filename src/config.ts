@@ -176,6 +176,11 @@ export function getConfig(): Config {
     summarizeLargeDiff: config.get<boolean>('summarizeLargeDiff', true),
     largeDiffThreshold: config.get<number>('largeDiffThreshold', 8000),
     issuePrefix: config.get<string>('issuePrefix', ''),
-    issueBranchPattern: config.get<string>('issueBranchPattern', '')
+    issueBranchPattern: config.get<string>('issueBranchPattern', ''),
+    includeImpactRiskAnalysis: config.get<boolean>('includeImpactRiskAnalysis', true),
+    runValidationBeforePR: config.get<boolean>('runValidationBeforePR', false),
+    validationCommands: config.get<string[]>('validationCommands', []),
+    validationTimeoutMs: config.get<number>('validationTimeoutMs', 120000),
+    maxValidationOutputChars: config.get<number>('maxValidationOutputChars', 4000)
   };
 }
