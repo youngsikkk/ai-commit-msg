@@ -277,6 +277,12 @@ Output format:
 ## Risk
 <Risk level, risk factors, and reviewer attention points>
 
+## Security Review
+<Security-sensitive review points when provided>
+
+## Suggested Remediation
+<Concrete remediation direction when risk signals are present>
+
 ## Testing
 <How to test these changes>
 
@@ -289,9 +295,13 @@ Output format:
 ## Deployment Checklist
 <Optional pre-deploy checklist for risky changes>
 
+## Fix Prompt
+<Optional prompt developers can copy into an AI coding assistant for safe remediation>
+
 Rules:
 - Use the automated analysis context when available
 - Keep the title concise and descriptive
+- Include Security Review, Suggested Remediation, and Fix Prompt when provided in the context
 - Include specific testing and deployment notes for risky changes
 - Use clear, professional language`;
 
@@ -342,7 +352,7 @@ export async function generatePRDescription(
         { role: 'user', content: buildPRPrompt(diff, fileSummary, analysisContext) }
       ],
       temperature: 0.7,
-      max_tokens: 1400
+      max_tokens: 1800
     });
 
     const content = response.choices[0]?.message?.content;
@@ -359,7 +369,7 @@ export async function generatePRDescription(
       model,
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 1400
+        maxOutputTokens: 1800
       }
     });
 
@@ -415,3 +425,4 @@ export function formatCommitMessage(commit: CommitMessage): string {
   }
   return `${commit.type}: ${commit.subject}`;
 }
+

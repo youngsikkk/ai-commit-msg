@@ -122,7 +122,7 @@ function ensurePRHasAnalysis(markdown: string, analysisContext: string): string 
     return `${markdown.trim()}\n\n---\n\n${analysisContext.trim()}`;
   }
 
-  const missingOptionalSections = ['Suggested Commit Split', 'Deployment Checklist']
+  const missingOptionalSections = ['Security Review', 'Suggested Remediation', 'Suggested Commit Split', 'Deployment Checklist', 'Fix Prompt']
     .filter(heading => !hasHeading(markdown, heading))
     .map(heading => extractMarkdownSection(analysisContext, heading))
     .filter((section): section is string => Boolean(section));
@@ -683,3 +683,5 @@ hookCommand
   });
 
 program.parse();
+
+

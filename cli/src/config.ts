@@ -24,7 +24,7 @@ const CONFIG_PATH = path.join(os.homedir(), CONFIG_FILE);
 const DEFAULT_MODELS: Record<Provider, string> = {
   openai: 'gpt-4o-mini',
   groq: 'llama-3.1-8b-instant',
-  gemini: 'gemini-1.5-flash',
+  gemini: 'gemini-2.5-flash',
   ollama: 'llama3.2'
 };
 
@@ -73,9 +73,14 @@ export function loadConfig(): Config {
 
   const provider = (process.env.COMMITCRAFT_PROVIDER || fileConfig.provider || 'openai') as Provider;
 
+  let model = process.env.COMMITCRAFT_MODEL || fileConfig.model || DEFAULT_MODELS[provider];
+  if (provider === 'gemini' && model === 'gemini-1.5-flash') {
+    model = DEFAULT_MODELS[provider];
+  }
+
   return {
     provider,
-    model: process.env.COMMITCRAFT_MODEL || fileConfig.model || DEFAULT_MODELS[provider],
+    model,
     language: (process.env.COMMITCRAFT_LANGUAGE || fileConfig.language || 'english') as Language,
     ollamaUrl: process.env.OLLAMA_URL || fileConfig.ollamaUrl || 'http://localhost:11434',
     openaiApiKey: process.env.OPENAI_API_KEY || fileConfig.openaiApiKey,

@@ -20,6 +20,12 @@ Output format:
 ## Risk
 <Risk level, risk factors, and reviewer attention points>
 
+## Security Review
+<Security-sensitive review points when provided>
+
+## Suggested Remediation
+<Concrete remediation direction when risk signals are present>
+
 ## Testing
 <How to test these changes>
 
@@ -32,6 +38,9 @@ Output format:
 ## Deployment Checklist
 <Optional pre-deploy checklist for risky changes>
 
+## Fix Prompt
+<Optional prompt developers can copy into an AI coding assistant for safe remediation>
+
 Rules:
 - Title should be concise and descriptive (max 50 chars)
 - Summary should explain the "why" and "what" of the changes
@@ -40,7 +49,8 @@ Rules:
 - Risk should use the provided automated analysis context when available
 - Testing should include specific steps or scenarios to verify the changes
 - Validation should summarize configured validation commands and failures when provided
-- Include Suggested Commit Split and Deployment Checklist when they are present in the automated context
+- Security Review and Suggested Remediation should preserve the provided automated analysis context
+- Include Suggested Commit Split, Deployment Checklist, and Fix Prompt when they are present in the automated context
 - Use clear, professional language`;
 
 const PR_SYSTEM_PROMPT_KO = `${PR_SYSTEM_PROMPT_EN}
@@ -91,7 +101,7 @@ async function generatePRWithOpenAI(
       { role: 'user', content: buildPRUserPrompt(diff, fileSummary, analysisContext) }
     ],
     temperature: 0.7,
-    max_tokens: 1400
+    max_tokens: 1800
   });
 
   const content = response.choices[0]?.message?.content;
@@ -123,7 +133,7 @@ async function generatePRWithGroq(
       { role: 'user', content: buildPRUserPrompt(diff, fileSummary, analysisContext) }
     ],
     temperature: 0.7,
-    max_tokens: 1400
+    max_tokens: 1800
   });
 
   const content = response.choices[0]?.message?.content;
@@ -148,7 +158,7 @@ async function generatePRWithGemini(
     model,
     generationConfig: {
       temperature: 0.7,
-      maxOutputTokens: 1400
+      maxOutputTokens: 1800
     }
   });
 
@@ -267,7 +277,7 @@ export function ensurePRAnalysisSections(description: string, automatedAnalysisM
     return `${description.trim()}\n\n---\n\n${automatedAnalysisMarkdown.trim()}`;
   }
 
-  const missingOptionalSections = ['Suggested Commit Split', 'Deployment Checklist']
+  const missingOptionalSections = ['Security Review', 'Suggested Remediation', 'Suggested Commit Split', 'Deployment Checklist', 'Fix Prompt']
     .filter(section => !hasMarkdownHeading(description, section))
     .map(section => extractMarkdownSection(automatedAnalysisMarkdown, section))
     .filter((section): section is string => Boolean(section));
@@ -278,3 +288,5 @@ export function ensurePRAnalysisSections(description: string, automatedAnalysisM
 
   return `${description.trim()}\n\n---\n\n${missingOptionalSections.join('\n\n')}`;
 }
+
+

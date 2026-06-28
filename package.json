@@ -26,7 +26,16 @@
     "ollama",
     "conventional-commits"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:ai-commit-msg.generate",
+    "onCommand:ai-commit-msg.generatePR",
+    "onCommand:ai-commit-msg.setOpenAIKey",
+    "onCommand:ai-commit-msg.setGroqKey",
+    "onCommand:ai-commit-msg.setGeminiKey",
+    "onCommand:ai-commit-msg.setOllamaUrl",
+    "onCommand:ai-commit-msg.createRuleset",
+    "onCommand:ai-commit-msg.generateReleaseNotes"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -80,7 +89,7 @@
         "aiCommit.model": {
           "type": "string",
           "default": "",
-          "description": "Model to use. Leave empty for defaults: OpenAI=gpt-4o-mini, Groq=llama-3.1-8b-instant, Gemini=gemini-1.5-flash, Ollama=llama3.2"
+          "description": "Model to use. Leave empty for defaults: OpenAI=gpt-4o-mini, Groq=llama-3.1-8b-instant, Gemini=gemini-2.5-flash, Ollama=llama3.2"
         },
         "aiCommit.ollamaUrl": {
           "type": "string",
@@ -181,7 +190,15 @@
         "key": "ctrl+shift+r",
         "mac": "cmd+shift+r"
       }
-    ]
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "ai-commit-msg.generate",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

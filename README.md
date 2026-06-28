@@ -17,11 +17,12 @@ Generate meaningful commit messages automatically using AI. Analyzes your staged
 - **Multi-provider support** - Choose from OpenAI, Groq, Google Gemini, or **Ollama (offline)**
 - **3 commit message candidates** - Pick the best one from AI-generated options
 - **PR description generation** - Auto-generate structured PR descriptions from your changes
-- **Impact & risk analysis** - Detect affected areas, risky change types, review focus, and suggested tests
+- **Pre-commit impact & risk review** - Show affected areas, security review, remediation guidance, and a fix prompt before commit
 - **Optional validation checks** - Detect and run lint/test/typecheck commands before PR description generation
 - **PR copy helpers** - Copy PR title, copy PR body, copy all markdown, or save `PR.md`
 - **Suggested commit split** - Warn when a diff looks like it should be split into smaller commits
 - **Deployment checklist** - Add pre-deploy checklist items for high-risk changes
+- **Security review & fix prompt** - Generate security review points, remediation guidance, and an AI-ready fix prompt
 - **Issue linking** - Auto-detect issue numbers from branch names (GitHub, GitLab, JIRA)
 - **Korean language support** - Generate commit messages in Korean
 - **Conventional Commits format** for consistent, semantic versioning friendly messages
@@ -61,6 +62,13 @@ Create a `.commitrc.json` file in your project root to enforce team conventions:
 - Custom prompts for AI
 - Language override
 
+### Pre-Commit Review
+When you run `AI Commit: Generate`, CommitCraft now opens a Markdown review before you commit:
+- Uses the staged diff, so the feedback appears at commit time rather than only during PR creation
+- Includes `Impact`, `Risk`, `Security Review`, `Suggested Remediation`, `Testing`, and `Fix Prompt`
+- Lets you copy the selected commit message, copy the fix prompt, save `PRE_COMMIT_REVIEW.md`, or save `FIX_PROMPT.md`
+- Helps catch risky auth, database, config, dependency, API, or deployment changes before they become commits
+
 ### PR Description Generation
 Automatically generate well-structured PR descriptions with:
 - Title (max 50 chars)
@@ -71,17 +79,19 @@ Automatically generate well-structured PR descriptions with:
 - Optional validation command results
 - Suggested commit split when the change mixes unrelated areas
 - Deployment checklist for risky changes
+- Security review, suggested remediation, and AI-ready fix prompt
 - Testing instructions
 
-Opens in a new editor tab with actions for `Copy PR Title`, `Copy PR Body`, `Copy All`, and `Save PR.md`.
+Opens in a new editor tab with actions for `Copy PR Title`, `Copy PR Body`, `Copy All`, `Save PR.md`, `Copy Fix Prompt`, and `Save FIX_PROMPT.md` when a fix prompt is available.
 
 ### Impact & Risk Analysis
-PR descriptions can include local impact and risk analysis before you publish a PR:
+Commit generation and PR descriptions can include local impact and risk analysis before you commit or publish a PR:
 - Detects risky areas such as auth, database migrations, deployment/infra, CI/CD, dependencies, and API contracts
 - Scores risk as Low, Medium, or High based on file blast radius, changed lines, and risk signals
 - Suggests review focus points and test scenarios
 - Suggests commit splits when the diff spans unrelated areas
 - Adds deployment checklist items for high-risk or deployment-sensitive changes
+- Adds security review points, suggested remediation, and a copyable fix prompt for AI-assisted follow-up
 - Warns in VS Code when a high-risk change is detected
 
 ### Optional Validation Checks
@@ -120,7 +130,8 @@ Example: Branch `feature/123-add-login` → Commit: `feat(auth): add login valid
 3. Enter your API key when prompted (first time only, not required for Ollama)
 4. **Choose from 3 generated candidates** or click "Regenerate" for new options
 5. The selected message appears in the Source Control input box
-6. Review and commit!
+6. A Pre-Commit Review Markdown tab opens with `Security Review`, `Suggested Remediation`, and `Fix Prompt`
+7. Review risks, copy the fix prompt if needed, then commit
 
 ---
 
@@ -151,7 +162,7 @@ Example: Branch `feature/123-add-login` → Commit: `feat(auth): add login valid
 |----------|---------------|
 | OpenAI | `gpt-4o-mini` |
 | Groq | `llama-3.1-8b-instant` |
-| Gemini | `gemini-1.5-flash` |
+| Gemini | `gemini-2.5-flash` |
 | Ollama | `llama3.2` |
 
 ### Default Exclusions
@@ -173,7 +184,7 @@ Example: Branch `feature/123-add-login` → Commit: `feat(auth): add login valid
 }
 ```
 
-When enabled, generated PR descriptions include `Impact`, `Risk`, `Review Focus`, `Testing`, `Validation`, `Suggested Commit Split`, and `Deployment Checklist` sections when applicable.
+When enabled, generated PR descriptions include `Impact`, `Risk`, `Security Review`, `Review Focus`, `Suggested Remediation`, `Testing`, `Validation`, `Suggested Commit Split`, `Deployment Checklist`, and `Fix Prompt` sections when applicable.
 
 ---
 

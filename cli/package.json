@@ -1,6 +1,6 @@
 {
   "name": "craftcommit-cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Generate AI-powered commit messages from terminal",
   "author": "youngsikkk",
   "license": "MIT",

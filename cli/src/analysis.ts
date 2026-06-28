@@ -19,6 +19,9 @@ interface Analysis {
   testing: string[];
   suggestedCommitSplits: string[];
   deploymentChecklist: string[];
+  securityReview: string[];
+  suggestedRemediations: string[];
+  fixPrompt: string;
 }
 
 const TEST_FILE_PATTERN = /(^|\/)(test|tests|__tests__|spec)(\/|$)|\.(test|spec)\.[jt]sx?$/i;
@@ -73,6 +76,115 @@ function getRiskLevel(score: number): RiskLevel {
     return 'medium';
   }
   return 'low';
+}
+
+function riskLabel(level: RiskLevel): string {
+  return level[0].toUpperCase() + level.slice(1);
+}
+
+function includesArea(areas: string[], needle: string): boolean {
+  return areas.some(area => area.includes(needle));
+}
+
+function buildSecurityReview(categories: string[], areas: string[], riskFactors: string[], riskLevel: RiskLevel): string[] {
+  const review: string[] = [];
+
+  if (categories.includes('security') || includesArea(areas, 'authentication')) {
+    review.push('Authentication or authorization behavior changed; inspect permission boundaries, token/session handling, and sensitive logging.');
+  }
+  if (categories.includes('database') || includesArea(areas, 'database')) {
+    review.push('Database or migration behavior changed; inspect SQL safety, rollback strategy, locks, and data exposure risk.');
+  }
+  if (categories.includes('configuration')) {
+    review.push('Configuration changed; verify secrets are not hardcoded and environment defaults are safe.');
+  }
+  if (categories.includes('dependencies')) {
+    review.push('Dependency or build manifest changed; run a dependency audit and check vulnerable transitive packages.');
+  }
+  if (categories.includes('api')) {
+    review.push('API or public contract changed; verify input validation, error handling, and backward compatibility.');
+  }
+  if (categories.includes('infrastructure') || categories.includes('ci/cd')) {
+    review.push('Deployment or CI/CD path changed; verify secret handling, rollout safety, and environment-specific behavior.');
+  }
+  if (riskFactors.some(factor => /destructive|heavy database/i.test(factor))) {
+    review.push('Potentially destructive database operation detected; confirm data backup, rollback, and lock impact before deploy.');
+  }
+  if (review.length === 0 && riskLevel !== 'low') {
+    review.push('No direct security-specific pattern was detected, but the change is broad enough to review for unintended exposure.');
+  }
+  if (review.length === 0) {
+    review.push('No direct security-sensitive pattern was detected; keep the review focused on correctness and regression checks.');
+  }
+
+  return review;
+}
+
+function buildSuggestedRemediations(categories: string[], areas: string[], riskFactors: string[], riskLevel: RiskLevel): string[] {
+  const remediations: string[] = [];
+
+  if (categories.includes('security') || includesArea(areas, 'authentication')) {
+    remediations.push('Add or verify tests for unauthorized access, expired sessions, role boundaries, and sensitive data masking.');
+  }
+  if (categories.includes('database') || includesArea(areas, 'database')) {
+    remediations.push('Use safe query patterns, document migration rollback, and verify the change with existing data shape.');
+  }
+  if (categories.includes('configuration')) {
+    remediations.push('Move secrets to environment or secret-manager configuration and confirm safe defaults for each environment.');
+  }
+  if (categories.includes('dependencies')) {
+    remediations.push('Run dependency audit/build checks and review lockfile changes for unexpected package upgrades.');
+  }
+  if (categories.includes('api')) {
+    remediations.push('Add contract or integration checks for request validation, error responses, and downstream compatibility.');
+  }
+  if (categories.includes('infrastructure') || categories.includes('ci/cd')) {
+    remediations.push('Validate deploy manifests or pipeline steps and confirm rollback and monitoring before release.');
+  }
+  if (riskFactors.some(factor => /No test files changed/i.test(factor))) {
+    remediations.push('Add a focused automated test or document a manual verification path before merging.');
+  }
+  if (riskLevel === 'high') {
+    remediations.push('Split unrelated changes if possible and prepare a rollback/smoke-test plan before deployment.');
+  }
+  if (remediations.length === 0) {
+    remediations.push('Keep the fix minimal, preserve existing behavior, and run the nearest targeted validation before merge.');
+  }
+
+  return remediations;
+}
+
+function buildFixPrompt(
+  riskLevel: RiskLevel,
+  riskScore: number,
+  areas: string[],
+  riskFactors: string[],
+  securityReview: string[],
+  suggestedRemediations: string[]
+): string {
+  return [
+    'Review the attached diff and propose safe fixes for the detected risks.',
+    '',
+    'Context:',
+    `- Risk level: ${riskLabel(riskLevel)} (${riskScore}/100)`,
+    `- Affected areas: ${areas.length > 0 ? areas.join(', ') : 'not detected'}`,
+    '',
+    'Risk factors:',
+    ...riskFactors.map(item => `- ${item}`),
+    '',
+    'Security review points:',
+    ...securityReview.map(item => `- ${item}`),
+    '',
+    'Suggested remediation direction:',
+    ...suggestedRemediations.map(item => `- ${item}`),
+    '',
+    'Instructions:',
+    '1. Identify the exact risky files or logic paths.',
+    '2. Propose minimal code changes that reduce the risk.',
+    '3. Add or update focused tests when behavior changes.',
+    '4. Preserve existing public behavior unless the diff clearly intends to change it.',
+    '5. Do not commit, push, or modify files without explicit approval.'
+  ].join('\n');
 }
 
 function analyze(diff: string, fileSummary: string): Analysis {
@@ -200,6 +312,10 @@ function analyze(diff: string, fileSummary: string): Analysis {
     }
   }
 
+  const normalizedRiskFactors = riskFactors.length > 0 ? riskFactors : ['No strong risk signal detected from the diff'];
+  const securityReview = buildSecurityReview(categories, areas, normalizedRiskFactors, riskLevel);
+  const suggestedRemediations = buildSuggestedRemediations(categories, areas, normalizedRiskFactors, riskLevel);
+
   return {
     additions,
     deletions,
@@ -207,11 +323,14 @@ function analyze(diff: string, fileSummary: string): Analysis {
     riskLevel,
     riskScore,
     impact,
-    riskFactors: riskFactors.length > 0 ? riskFactors : ['No strong risk signal detected from the diff'],
+    riskFactors: normalizedRiskFactors,
     reviewFocus,
     testing,
     suggestedCommitSplits: suggestedCommitSplits.length >= 2 ? suggestedCommitSplits : [],
-    deploymentChecklist
+    deploymentChecklist,
+    securityReview,
+    suggestedRemediations,
+    fixPrompt: buildFixPrompt(riskLevel, riskScore, areas, normalizedRiskFactors, securityReview, suggestedRemediations)
   };
 }
 
@@ -245,21 +364,34 @@ export function formatAnalysisMarkdown(diff: string, fileSummary: string, valida
   const checklistSection = analysis.deploymentChecklist.length > 0
     ? `\n\n## Deployment Checklist\n${checklist(analysis.deploymentChecklist)}`
     : '';
+  const fixPromptSection = analysis.fixPrompt.trim()
+    ? `\n\n## Fix Prompt\n\`\`\`text\n${analysis.fixPrompt.trim()}\n\`\`\``
+    : '';
 
   return `## Impact
 ${list(analysis.impact)}
 
 ## Risk
-- Level: ${riskLevel[0].toUpperCase() + riskLevel.slice(1)} (${riskScore}/100)
+- Level: ${riskLabel(riskLevel)} (${riskScore}/100)
 - Changed lines: +${analysis.additions} / -${analysis.deletions}
 ${list(analysis.riskFactors)}
 
+## Security Review
+${list(analysis.securityReview)}
+
 ## Review Focus
 ${list(analysis.reviewFocus)}
+
+## Suggested Remediation
+${list(analysis.suggestedRemediations)}
 
 ## Testing
 ${list(analysis.testing)}
 
 ## Validation
-${validationMarkdown(validationReport)}${splitSection}${checklistSection}`;
+${validationMarkdown(validationReport)}${splitSection}${checklistSection}${fixPromptSection}`;
 }
+
+
+
+

@@ -10,7 +10,7 @@ const API_KEY_SECRETS = {
 const DEFAULT_MODELS: Record<Provider, string> = {
   openai: 'gpt-4o-mini',
   groq: 'llama-3.1-8b-instant',
-  gemini: 'gemini-1.5-flash',
+  gemini: 'gemini-2.5-flash',
   ollama: 'llama3.2'
 };
 
@@ -153,9 +153,9 @@ export function getConfig(): Config {
   const config = vscode.workspace.getConfiguration('aiCommit');
   const provider = config.get<Provider>('provider', 'openai');
 
-  // Get model, use default if empty
+  // Get model, use default if empty. Migrate old Gemini defaults that now 404.
   let model = config.get<string>('model', '');
-  if (!model || model.trim() === '') {
+  if (!model || model.trim() === '' || (provider === 'gemini' && model.trim() === 'gemini-1.5-flash')) {
     model = DEFAULT_MODELS[provider];
   }
 

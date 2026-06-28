@@ -192,7 +192,7 @@ commitcraft --issue-pattern "(JIRA-\d+)"
 - Fast and free tier available
 
 ### Gemini
-- Default model: `gemini-1.5-flash`
+- Default model: `gemini-2.5-flash`
 - Requires: `GEMINI_API_KEY`
 - Get key: https://aistudio.google.com/app/apikey
 

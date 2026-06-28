@@ -105,6 +105,39 @@ function extractPRBody(markdown: string): string {
     .trim();
 }
 
+function extractMarkdownSection(markdown: string, heading: string): string | undefined {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`^##\\s+${escaped}\\b.*$`, 'im').exec(markdown);
+
+  if (!match || match.index === undefined) {
+    return undefined;
+  }
+
+  const sectionStart = match.index;
+  const remainder = markdown.slice(sectionStart + match[0].length);
+  const nextHeadingMatch = /^##\s+/m.exec(remainder);
+  const sectionEnd = nextHeadingMatch
+    ? sectionStart + match[0].length + nextHeadingMatch.index
+    : markdown.length;
+
+  return markdown.slice(sectionStart, sectionEnd).trim();
+}
+
+function extractFixPrompt(markdown: string): string {
+  const section = extractMarkdownSection(markdown, 'Fix Prompt');
+
+  if (!section) {
+    return '';
+  }
+
+  return section
+    .replace(/^##\s+Fix Prompt\b.*$/im, '')
+    .trim()
+    .replace(/^```(?:\w+)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
 async function saveMarkdownFile(workspacePath: string, fileName: string, content: string): Promise<void> {
   const target = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.file(path.join(workspacePath, fileName)),
@@ -119,6 +152,68 @@ async function saveMarkdownFile(workspacePath: string, fileName: string, content
 
   await vscode.workspace.fs.writeFile(target, Buffer.from(content, 'utf-8'));
   vscode.window.showInformationMessage(`Saved ${path.basename(target.fsPath)}`);
+}
+
+function buildPreCommitReviewMarkdown(commitMessage: string, analysisMarkdown: string): string {
+  return [
+    '# Pre-Commit Review',
+    '',
+    '## Selected Commit Message',
+    '```text',
+    commitMessage,
+    '```',
+    '',
+    '## Commit Step',
+    '- The selected message has been inserted into the VS Code Source Control input box.',
+    '- Review this pre-commit analysis before running `git commit`.',
+    '- If the fix prompt identifies a real issue, update the code and regenerate the commit message before committing.',
+    '',
+    '---',
+    '',
+    analysisMarkdown.trim(),
+    ''
+  ].join('\n');
+}
+
+async function openPreCommitReview(workspacePath: string, commitMessage: string, analysisMarkdown: string): Promise<void> {
+  const markdown = buildPreCommitReviewMarkdown(commitMessage, analysisMarkdown);
+  const doc = await vscode.workspace.openTextDocument({
+    content: markdown,
+    language: 'markdown'
+  });
+  await vscode.window.showTextDocument(doc, { preview: false });
+  await handlePreCommitReviewActions(workspacePath, commitMessage, markdown);
+}
+
+async function handlePreCommitReviewActions(
+  workspacePath: string,
+  commitMessage: string,
+  markdown: string
+): Promise<void> {
+  const fixPrompt = extractFixPrompt(markdown);
+  const actions = ['Copy Commit Message', 'Copy Fix Prompt', 'Save PRE_COMMIT_REVIEW.md'];
+
+  if (fixPrompt) {
+    actions.push('Save FIX_PROMPT.md');
+  }
+
+  const action = await vscode.window.showInformationMessage(
+    'Pre-commit review generated. Review risks before committing.',
+    ...actions
+  );
+
+  if (action === 'Copy Commit Message') {
+    await vscode.env.clipboard.writeText(commitMessage);
+    vscode.window.showInformationMessage('Commit message copied to clipboard.');
+  } else if (action === 'Copy Fix Prompt' && fixPrompt) {
+    await vscode.env.clipboard.writeText(fixPrompt);
+    vscode.window.showInformationMessage('Fix prompt copied to clipboard.');
+  } else if (action === 'Save PRE_COMMIT_REVIEW.md') {
+    await saveMarkdownFile(workspacePath, 'PRE_COMMIT_REVIEW.md', markdown);
+  } else if (action === 'Save FIX_PROMPT.md' && fixPrompt) {
+    const fixPromptMarkdown = ['# Fix Prompt', '', '```text', fixPrompt, '```', ''].join('\n');
+    await saveMarkdownFile(workspacePath, 'FIX_PROMPT.md', fixPromptMarkdown);
+  }
 }
 
 async function promptForValidationRun(workspacePath: string, config: Config): Promise<string[]> {
@@ -161,12 +256,16 @@ async function promptForValidationRun(workspacePath: string, config: Config): Pr
 async function handleGeneratedPRActions(workspacePath: string, prDescription: string): Promise<void> {
   const title = extractPRTitle(prDescription);
   const body = extractPRBody(prDescription);
+  const fixPrompt = extractFixPrompt(prDescription);
+  const actions = ['Copy PR Title', 'Copy PR Body', 'Copy All', 'Save PR.md'];
+
+  if (fixPrompt) {
+    actions.push('Copy Fix Prompt', 'Save FIX_PROMPT.md');
+  }
+
   const action = await vscode.window.showInformationMessage(
     'PR description generated successfully!',
-    'Copy PR Title',
-    'Copy PR Body',
-    'Copy All',
-    'Save PR.md'
+    ...actions
   );
 
   if (action === 'Copy PR Title') {
@@ -180,6 +279,11 @@ async function handleGeneratedPRActions(workspacePath: string, prDescription: st
     vscode.window.showInformationMessage('PR markdown copied to clipboard.');
   } else if (action === 'Save PR.md') {
     await saveMarkdownFile(workspacePath, 'PR.md', prDescription);
+  } else if (action === 'Copy Fix Prompt') {
+    await vscode.env.clipboard.writeText(fixPrompt);
+    vscode.window.showInformationMessage('Fix prompt copied to clipboard.');
+  } else if (action === 'Save FIX_PROMPT.md') {
+    await saveMarkdownFile(workspacePath, 'FIX_PROMPT.md', ['# Fix Prompt', '', '```text', fixPrompt, '```', ''].join('\n'));
   }
 }
 
@@ -276,6 +380,14 @@ async function selectCandidate(candidates: CommitMessage[]): Promise<{ selected?
   return { selected: picked.commit, regenerate: false };
 }
 
+async function runCommandWithErrorMessage(label: string, command: () => Promise<void>): Promise<void> {
+  try {
+    await command();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`${label} failed: ${message}`);
+  }
+}
 async function generateCommand(context: vscode.ExtensionContext): Promise<void> {
   // Get Git API
   const git = await getGitAPI();
@@ -368,6 +480,8 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.showErrorMessage(`Failed to get diff: ${message}`);
     return;
   }
+  const preCommitDiffResult = diffResult;
+
 
   // Summarize large diffs if enabled
   if (config.summarizeLargeDiff && diffResult.diff.length > config.largeDiffThreshold) {
@@ -485,6 +599,20 @@ async function generateCommand(context: vscode.ExtensionContext): Promise<void> 
 
   // Insert into SCM input box
   repo.inputBox.value = finalMessage;
+
+  if (config.includeImpactRiskAnalysis) {
+    const preCommitAnalysis = analyzeDiff(preCommitDiffResult.diff, preCommitDiffResult.fileSummary);
+    const preCommitReviewMarkdown = formatAutomatedAnalysisMarkdown(preCommitAnalysis);
+
+    if (preCommitAnalysis.riskLevel === 'high') {
+      vscode.window.showWarningMessage(
+        `High-risk staged change detected (${preCommitAnalysis.riskScore}/100). Review the pre-commit analysis before committing.`
+      );
+    }
+
+    await openPreCommitReview(workspacePath, finalMessage, preCommitReviewMarkdown);
+  }
+
   vscode.window.showInformationMessage('Commit message generated successfully!');
 }
 
@@ -957,7 +1085,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const generateDisposable = vscode.commands.registerCommand(
     'ai-commit-msg.generate',
-    () => generateCommand(context)
+    () => runCommandWithErrorMessage('Generate commit message', () => generateCommand(context))
   );
 
   const setOpenAIKeyDisposable = vscode.commands.registerCommand(
@@ -982,17 +1110,17 @@ export function activate(context: vscode.ExtensionContext) {
 
   const generatePRDisposable = vscode.commands.registerCommand(
     'ai-commit-msg.generatePR',
-    () => generatePRCommand(context)
+    () => runCommandWithErrorMessage('Generate PR description', () => generatePRCommand(context))
   );
 
   const createRulesetDisposable = vscode.commands.registerCommand(
     'ai-commit-msg.createRuleset',
-    () => createRulesetCommand()
+    () => runCommandWithErrorMessage('Create team ruleset', () => createRulesetCommand())
   );
 
   const generateReleaseNotesDisposable = vscode.commands.registerCommand(
     'ai-commit-msg.generateReleaseNotes',
-    () => generateReleaseNotesCommand()
+    () => runCommandWithErrorMessage('Generate release notes', () => generateReleaseNotesCommand())
   );
 
   context.subscriptions.push(

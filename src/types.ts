@@ -40,6 +40,9 @@ export interface ImpactRiskAnalysis {
   testSuggestions: string[];
   suggestedCommitSplits: string[];
   deploymentChecklist: string[];
+  securityReview: string[];
+  suggestedRemediations: string[];
+  fixPrompt: string;
 }
 
 export type ValidationStatus = 'passed' | 'failed' | 'skipped';
@@ -88,3 +91,4 @@ export const VALID_COMMIT_TYPES: CommitType[] = [
   'feat', 'fix', 'docs', 'style', 'refactor',
   'perf', 'test', 'build', 'ci', 'chore'
 ];
+
